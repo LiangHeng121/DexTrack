@@ -84,7 +84,7 @@ assets/
 
 ### Kinematic Retargeting
 
-Code uploaded [here](https://drive.google.com/file/d/18Zbl7mNaxV9CnLos_tM6CalyvB3sE1ce/view?usp=sharing). The pipeline uses keypoint-based retargeting. For a new robot hand, the user needs to manually define corresponding keypoints between the robot hand and the MANO hand. For Leap and Allegro, the selected keypoint indices are hardcoded in the implementation. The code is somewhat messy. The main entry script is `exp_runner_stage_1.py`.
+Code uploaded [here](https://drive.google.com/file/d/18Zbl7mNaxV9CnLos_tM6CalyvB3sE1ce/view?usp=sharing). The retargeting pipeline used in both DexTrack and QuasiSim is based on keypoint-based retargeting. For a new robot hand, the user needs to manually define corresponding keypoints between the robot hand and the MANO hand. For Leap and Allegro, the selected keypoint indices are hardcoded in the implementation. The code is somewhat messy. The main entry script is `exp_runner_stage_1.py`.
 
 <!-- We've also included code for kinematic retargeting in this repo. Please refer to []() for detailed usage.  -->
 
