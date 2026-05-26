@@ -1,5 +1,5 @@
 """
-DexTrack rollout offline renderer.
+DexTrack rollout offline renderer (v2: explicit Isaac Gym DOF order + sanity check).
 
 Reads `ts_to_hand_obj_obs_reset_1.npy` produced by Isaac Gym eval, plus the
 Allegro hand URDF and the object mesh, and outputs an mp4 / gif.
@@ -8,11 +8,8 @@ Usage:
     python render_rollout.py \
         --rollout rollout/ts_to_hand_obj_obs_reset_1.npy \
         --urdf assets/allegro_hand_description/urdf/allegro_hand_description_right_fly_v2.urdf \
-        --obj-mesh assets/meshdatav3_scaled/sem/ori_grab_s2_cubesmall_inspect_1/ori_grab_s2_cubesmall_inspect_1.obj \
-        --env-idx 0 \
-        --out cubesmall.mp4
-
-Optional: --reference rollout/reference.npy to overlay the kinematic GT trajectory.
+        --obj-mesh assets/meshdatav3_scaled/sem/<seq>/coacd/<seq>.obj \
+        --out out.mp4
 """
 import argparse
 import os
@@ -21,21 +18,30 @@ from pathlib import Path
 import numpy as np
 import trimesh
 import yourdfpy
-from PIL import Image
 import imageio.v2 as imageio
 
-os.environ.setdefault("PYOPENGL_PLATFORM", "egl" if os.uname().sysname == "Linux" else "")
+if os.uname().sysname == "Linux":
+    os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 import pyrender
+
+
+ISAACGYM_DOF_ORDER = [
+    "WRJ0x", "WRJ0y", "WRJ0z", "WRJ0rx", "WRJ0ry", "WRJ0rz",
+    "joint_0",  "joint_1",  "joint_2",  "joint_3",
+    "joint_12", "joint_13", "joint_14", "joint_15",
+    "joint_4",  "joint_5",  "joint_6",  "joint_7",
+    "joint_8",  "joint_9",  "joint_10", "joint_11",
+]
 
 
 def quat_xyzw_to_matrix(q):
     x, y, z, w = q
-    n = np.sqrt(x*x + y*y + z*z + w*w)
-    x, y, z, w = x/n, y/n, z/n, w/n
+    n = float(np.sqrt(x * x + y * y + z * z + w * w))
+    x, y, z, w = x / n, y / n, z / n, w / n
     return np.array([
-        [1-2*(y*y+z*z),   2*(x*y - z*w), 2*(x*z + y*w)],
-        [2*(x*y + z*w),   1-2*(x*x+z*z), 2*(y*z - x*w)],
-        [2*(x*z - y*w),   2*(y*z + x*w), 1-2*(x*x+y*y)],
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w),     2 * (x * z + y * w)],
+        [2 * (x * y + z * w),     1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w),     2 * (y * z + x * w),     1 - 2 * (x * x + y * y)],
     ])
 
 
@@ -77,7 +83,8 @@ def make_scene(urdf_path, obj_mesh_path, ref_mesh=False):
                 metallicFactor=0.1, roughnessFactor=0.7)
             pm = pyrender.Mesh.from_trimesh(tm, material=mat, smooth=False)
             node = scene.add(pm, pose=np.eye(4))
-            link_nodes.setdefault(link_name, []).append((node, vis.origin if vis.origin is not None else np.eye(4)))
+            origin = vis.origin if vis.origin is not None else np.eye(4)
+            link_nodes.setdefault(link_name, []).append((node, origin))
 
     obj_tm = trimesh.load(obj_mesh_path, force="mesh")
     obj_mat = pyrender.MetallicRoughnessMaterial(
@@ -93,19 +100,55 @@ def make_scene(urdf_path, obj_mesh_path, ref_mesh=False):
         ref_node = scene.add(pyrender.Mesh.from_trimesh(obj_tm.copy(), material=ref_mat, smooth=False))
 
     light = pyrender.DirectionalLight(color=np.ones(3), intensity=4.0)
-    L = np.eye(4); L[:3, 3] = [0.4, 0.4, 1.2]
+    L = np.eye(4)
+    L[:3, 3] = [0.4, 0.4, 1.2]
     scene.add(light, pose=L)
 
     cam = pyrender.PerspectiveCamera(yfov=np.pi / 4.0)
     cam_pose = np.array([
-        [ 1.0, 0.0, 0.0, 0.05],
-        [ 0.0, 0.3, -0.95, -0.55],
-        [ 0.0, 0.95, 0.3,  0.55],
-        [ 0.0, 0.0, 0.0,   1.0],
+        [1.0, 0.0,  0.0,   0.05],
+        [0.0, 0.3, -0.95, -0.55],
+        [0.0, 0.95, 0.3,   0.55],
+        [0.0, 0.0,  0.0,   1.0],
     ])
     scene.add(cam, pose=cam_pose)
 
     return robot, scene, link_nodes, obj_node, ref_node
+
+
+def apply_pose(robot, scene, link_nodes, hand_q22):
+    cfg = {jn: float(hand_q22[i]) for i, jn in enumerate(ISAACGYM_DOF_ORDER)}
+    robot.update_cfg(cfg)
+    for link_name, entries in link_nodes.items():
+        T_link = robot.get_transform(link_name)
+        for node, vis_origin in entries:
+            scene.set_pose(node, T_link @ vis_origin)
+
+
+def sanity_check(robot, hand_qpos, obj_pose, env_idx):
+    """Print palm and object world positions at frame 0 and check distance."""
+    cfg = {jn: float(hand_qpos[0, i]) for i, jn in enumerate(ISAACGYM_DOF_ORDER)}
+    robot.update_cfg(cfg)
+    candidates = ["palm_link", "link_palm_rz", "link_palm_z"]
+    palm_T = None
+    palm_name = None
+    for c in candidates:
+        try:
+            palm_T = robot.get_transform(c)
+            palm_name = c
+            break
+        except Exception:
+            continue
+    if palm_T is None:
+        print("[check] could not find palm link, available links:",
+              list(robot.link_map.keys())[:10])
+        return
+    palm_xyz = palm_T[:3, 3]
+    obj_xyz = obj_pose[0, :3]
+    dist = float(np.linalg.norm(palm_xyz - obj_xyz))
+    print(f"[check] frame 0 env {env_idx}: palm({palm_name})={palm_xyz}, obj={obj_xyz}, dist={dist:.4f} m")
+    if dist > 0.3:
+        print(f"[warn] palm-object distance > 30 cm at frame 0. Coord/joint order likely wrong.")
 
 
 def main():
@@ -121,6 +164,8 @@ def main():
     ap.add_argument("--height", type=int, default=720)
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--stride", type=int, default=1, help="Render every Nth frame.")
+    ap.add_argument("--quat-wxyz", action="store_true",
+                    help="Interpret object quaternion as (w,x,y,z) instead of default (x,y,z,w).")
     args = ap.parse_args()
 
     print(f"[load] rollout: {args.rollout}")
@@ -128,31 +173,30 @@ def main():
     n_frames = hand_qpos.shape[0]
     print(f"[load] {n_frames} frames, hand_dof={hand_qpos.shape[1]}")
 
+    if args.quat_wxyz:
+        obj_pose = obj_pose[:, [0, 1, 2, 4, 5, 6, 3]]
+        ref_obj = ref_obj[:, [0, 1, 2, 4, 5, 6, 3]]
+
     robot, scene, link_nodes, obj_node, ref_node = make_scene(
         args.urdf, args.obj_mesh, ref_mesh=(args.reference is not None))
 
-    joint_order = list(robot.actuated_joint_names)
-    print(f"[urdf] {len(joint_order)} actuated joints: {joint_order[:6]} ...")
-    if len(joint_order) != hand_qpos.shape[1]:
-        print(f"[warn] URDF joints ({len(joint_order)}) != rollout dof ({hand_qpos.shape[1]}). "
-              "Assuming order in rollout matches URDF's actuated_joint_names ordering.")
+    urdf_joint_names = list(robot.actuated_joint_names)
+    missing = [n for n in ISAACGYM_DOF_ORDER if n not in urdf_joint_names]
+    if missing:
+        print(f"[error] URDF missing joints: {missing}")
+        return
+    print(f"[urdf] {len(urdf_joint_names)} actuated joints found, all 22 IG DOFs present.")
+
+    sanity_check(robot, hand_qpos, obj_pose, args.env_idx)
 
     renderer = pyrender.OffscreenRenderer(args.width, args.height)
 
     frames_out = []
     for t in range(0, n_frames, args.stride):
-        cfg = {jn: float(hand_qpos[t, i]) for i, jn in enumerate(joint_order)}
-        robot.update_cfg(cfg)
-        fk = robot.scene.graph.get
-        for link_name, entries in link_nodes.items():
-            T_link = robot.get_transform(link_name)
-            for node, vis_origin in entries:
-                scene.set_pose(node, T_link @ vis_origin)
-
+        apply_pose(robot, scene, link_nodes, hand_qpos[t])
         scene.set_pose(obj_node, pose_to_T(obj_pose[t]))
         if ref_node is not None:
             scene.set_pose(ref_node, pose_to_T(ref_obj[t]))
-
         color, _ = renderer.render(scene)
         frames_out.append(color)
 
