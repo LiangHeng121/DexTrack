@@ -72,3 +72,34 @@ assets/meshdatav3_scaled/*
 retargeting/*
 
 __MACOSX/*
+
+# Wandb local cache
+wandb/
+**/wandb/
+isaacgymenvs/wandb/
+isaacgymenvs/wandb/*
+
+# TensorBoard / training cache
+**/summaries/
+**/*.tfevents.*
+**/runs_*/
+.cache/
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+
+# Python
+*.pyc
+.pytest_cache/
+.mypy_cache/
+
+# Local render output
+render_data/
+venv_render/
+
+# Patch scripts dropped to /tmp aren't tracked anyway, but ignore stray copies
+patch_scripts_v*.py

@@ -657,33 +657,17 @@ if __name__ == "__main__":
         checkpoint = ''
         tag = f"tracking_{object_name}"
         
-        if args.launch_type == 'trajectory':
-            if args.hand_type == 'allegro': ## modify the traing name ##
-                train_name = f"tracking_{object_name}_obs_{obs_type}_density_{args.rigid_obj_density}_trans_{args.glb_trans_vel_scale}_rot_{args.glb_rot_vel_scale}_goalcond_{args.goal_cond}_{args.additional_tag}"
-            elif args.hand_type == 'leap':
-                train_name = f"tracking_{object_name}_{args.hand_type}_obs_{obs_type}_density_{args.rigid_obj_density}_trans_{args.glb_trans_vel_scale}_rot_{args.glb_rot_vel_scale}_goalcond_{args.goal_cond}_{args.additional_tag}"
-            else:
-                raise ValueError
-        elif args.launch_type == 'trajectory_baseline_search':
-            
-            if args.hand_type == 'allegro':
-                train_name = f"tracking_{object_name}_traj_{traj_grab_data_tag}_obs_{obs_type}_density_{args.rigid_obj_density}_trans_{args.glb_trans_vel_scale}_rot_{args.glb_rot_vel_scale}_goalcond_{args.goal_cond}_{args.additional_tag}"
-            elif args.hand_type == 'leap':
-                train_name = f"tracking_{object_name}_traj_{traj_grab_data_tag}_{args.hand_type}_obs_{obs_type}_density_{args.rigid_obj_density}_trans_{args.glb_trans_vel_scale}_rot_{args.glb_rot_vel_scale}_goalcond_{args.goal_cond}_{args.additional_tag}"
-            else:
-                raise ValueError
-        elif args.launch_type == 'object_type':
-            if args.hand_type == 'allegro':
-                train_name = f"tracking_{object_name}_traj_{traj_grab_data_tag}_obs_{obs_type}_density_{args.rigid_obj_density}_trans_{args.glb_trans_vel_scale}_rot_{args.glb_rot_vel_scale}_goalcond_{args.goal_cond}_{args.additional_tag}"
-            elif args.hand_type == 'leap':
-                train_name = f"tracking_{object_name}_traj_{traj_grab_data_tag}_{args.hand_type}_obs_{obs_type}_density_{args.rigid_obj_density}_trans_{args.glb_trans_vel_scale}_rot_{args.glb_rot_vel_scale}_goalcond_{args.goal_cond}_{args.additional_tag}"
-            else:
-                raise ValueError
-        else:
-            raise ValueError
+        # Short train_name: passed to rl_games as config.name which only shows up
+        # in ckpt filenames (`last_<name>_ep_<X>_rew_<Y>.pth` and `<name>.pth`).
+        # Per-run dir already encodes seq + timestamp; ckpts live in `ckpt/`, so the
+        # filename only needs to identify "what this file is" (a policy snapshot).
+        train_name = "policy"
         
         
-        full_experiment_name = train_name
+        # "." tells rl_games NOT to create a subdir under train_dir; ckpts land in
+        # train_dir/nn/ directly. The bash launcher's log_path already encodes the
+        # per-run timestamp, so no further disambiguation is needed.
+        full_experiment_name = "."
         
         if args.headless:
             capture_video = False
@@ -1174,6 +1158,15 @@ if __name__ == "__main__":
             
             cmd = f"{cuda_visible_text} python train.py task={task_type} train={train_type} sim_device='cuda:{cuda_idxx}' rl_device='cuda:{cuda_idxx}'  capture_video={capture_video} force_render={force_render} headless={args.headless}   task.env.numEnvs={args.numEnvs} train.params.config.minibatch_size={args.minibatch_size}  task.env.useRelativeControl={args.use_relative_control}  train.params.config.max_epochs={args.max_epochs} task.env.mocap_sv_info_fn={mocap_sv_info_fn} task.env.goal_cond={args.goal_cond} task.env.object_name={object_name} tag={tag} train.params.config.name={train_name} train.params.config.full_experiment_name={full_experiment_name} task.sim.dt={args.dt} test={args.test} task.env.use_kinematics_bias={args.use_kinematics_bias} task.env.w_obj_ornt={args.w_obj_ornt} task.env.observationType={obs_type}  task.env.separate_stages={args.separate_stages} task.env.rigid_obj_density={args.rigid_obj_density}   task.env.kinematics_only={args.kinematics_only}  task.env.use_fingertips={args.use_fingertips}  task.env.glb_trans_vel_scale={args.glb_trans_vel_scale} task.env.glb_rot_vel_scale={args.glb_rot_vel_scale} task.env.use_kinematics_bias_wdelta={args.use_kinematics_bias_wdelta} task.env.hand_pose_guidance_glb_trans_coef={args.hand_pose_guidance_glb_trans_coef} task.env.hand_pose_guidance_glb_rot_coef={args.hand_pose_guidance_glb_rot_coef} task.env.hand_pose_guidance_fingerpose_coef={args.hand_pose_guidance_fingerpose_coef} task.env.rew_finger_obj_dist_coef={args.rew_finger_obj_dist_coef} task.env.rew_delta_hand_pose_coef={args.rew_delta_hand_pose_coef} task.env.dofSpeedScale={args.dofSpeedScale} task.env.use_twostage_rew={args.use_twostage_rew} task.env.ground_distance={args.ground_distance} task.env.use_canonical_state={args.use_canonical_state} task.env.disable_obj_gravity={args.disable_gravity} train.params.config.save_best_after=50 task.env.right_hand_dist_thres={args.right_hand_dist_thres} checkpoint={args.checkpoint} task.env.use_real_twostage_rew={args.use_real_twostage_rew} task.env.start_grasping_fr={args.start_grasping_fr} task.env.controlFrequencyInv={args.controlFrequencyInv} task.env.episodeLength={args.episodeLength} task.env.start_frame={args.start_frame} task.env.rew_obj_pose_coef={args.rew_obj_pose_coef} task.env.goal_dist_thres={args.goal_dist_thres} task.env.lifting_separate_stages={args.lifting_separate_stages} task.env.strict_lifting_separate_stages={args.strict_lifting_separate_stages} task.env.table_z_dim={args.table_z_dim} task.env.add_table={args.add_table} exp_dir={exp_dir} task.env.use_taco_obj_traj={args.use_taco_obj_traj} task.env.pre_optimized_traj={ cur_pre_optimized_traj } task.env.hand_type={ args.hand_type } enableCameraSensors={enableCameraSensors} graphics_device_id={cuda_idx} task.env.use_hand_actions_rew={args.use_hand_actions_rew} task.env.supervised_training={args.supervised_training} {training_mode_config} {test_inst_config} {preload_experience_config} {single_instance_training_config} {sampleds_with_object_code_fn_config} {log_path_config} {train_dir_config} {grab_opt_res_config}  {taco_opt_res_config} {single_instance_tag_config} {obj_type_to_optimized_res_fn_config} {supervised_loss_coef_config} {pure_supervised_training_config} {inst_tag_to_latent_feature_fn_config} {object_type_to_latent_feature_fn_config} {obj_type_to_opt_res_config} {maxx_inst_nn_config} {tracking_folder_info_config} {only_training_on_succ_samples_config} {use_teacher_model_config} {use_strict_maxx_nn_ts_config} {taco_interped_data_sv_additional_tag_config} {strict_maxx_nn_ts_config} {grab_train_test_setting_config} {use_local_canonical_state_config} {bound_loss_coef_config} {rew_thres_config} {rew_smoothness_coef_config} {obj_type_to_base_traj_fn_config} {use_base_traj_config} {rew_thres_with_selected_insts_config} {selected_inst_idxes_dict_config} {customize_damping_config} {customize_global_damping_config} {train_on_all_trajs_config} {single_instance_state_based_train_config} {data_selection_ratio_config} {wo_vel_obs_config} {downsample_config} {target_inst_tag_list_fn_config} {teacher_model_config} {multiple_teacher_model_config} {base_traj_config} {history_setting_config} {good_inst_opt_res_config} {w_franka_config} {randomize_config} {early_terminate_config} {substeps_config} {forcasting_model_config} {use_window_future_selection_config} {forcasting_inv_freq_config} {controller_setting_config} {forcasting_history_ws_config} {sv_info_during_training_config} {impedance_control_config} {w_obj_latent_features_config} {net_type_config} {history_freq_config} {use_future_obs_config} {w_history_window_index_config} {randomize_conditions_config} {w_inst_latent_features_config} {masked_mimic_training_setting} {forcasting_model_training_setting} {randomize_condition_type_config} {contact_condition_setting} {partial_info_dict_setting} {st_ed_state_cond_setting} {forcasting_diffusion_model_config} {history_glbfeat_setting} {random_shift_conditions_setting} {only_use_hand_first_frame_config} {forecasting_agent_training_config} {use_world_model_config} {train_controller_config} {train_forecasting_model_config} {forecasting_model_weight_fn_config} {single_inst_tag_config} {activate_forecaster_config} {comput_reward_traj_hand_qpos_config} {use_future_ref_as_obs_goal_config} {forecast_obj_pos_config} {multiple_kine_source_trajs_fn_config} {use_multiple_kine_source_trajs_config} {include_obj_rot_in_obs_config} {compute_hand_rew_buf_threshold_config} {w_kine_retar_with_arm_config} {w_finger_pos_rew_config} {franka_delta_delta_mult_coef_config} {control_arm_via_ik_config} {warm_actions_mult_coef_config} {hand_qpos_rew_coef_config} {ornt_rew_scheduling_config} {glb_mult_factor_scaling_config} {not_use_kine_bias_config} {disable_hand_obj_contact_config} {wo_fingertip_rot_vel_config} {arm_ctl_params_config} {ts_teacher_model_config} {randomize_setting_config} {obj_init_pos_rand_sigma_config} {obs_simplified_config} {w_traj_modifications_config} {rand_obj_mass_range_config} {use_v2_leap_warm_urdf_config} {action_specific_rand_config} {hand_specific_randomizations_config} {schedule_hodist_coef_config} {reset_obj_mass_config} {use_vision_obs_config} {w_rotation_axis_rew_config} {add_physical_params_in_obs_config} {whether_randomize_obs_act_config} {obs_rand_noise_scale_config} {dagger_style_training_config} {teacher_subj_idx_config} {action_chunking_config} {horizon_length_config} {bc_style_training_config} {demonstration_tuning_config} {bc_relative_targets_config} {distill_full_to_partial_config} {train_free_hand_config} {simreal_modeling_config} {more_allegro_stiffness_config} {distinguish_kine_with_base_traj_config} {distill_delta_targets_config} {preset_cond_type_config} {preload_all_saved_exp_buffers_config} {use_actual_prev_targets_in_obs_config} {use_no_obj_pose_config} {multi_traj_use_joint_order_in_sim_config} {action_chunking_skip_frames_config} {multi_inst_chunking_config} {add_obj_features_config} {kine_ed_tag_config} {only_rot_axis_guidance_config} {add_penalty_config} {use_multi_step_control_config} {schedule_episod_length_config} {use_actual_traj_length_config} {randomize_reset_frame_config} {add_forece_obs_config} {distill_via_bc_config} {record_experiences_config} {learning_rate_config} {forecasting_obs_with_original_obs_config} {glb_action_penalty_schedule_config} {hand_targets_smooth_config} {preset_multi_traj_index_config} {save_experiences_via_ts_config} {load_experiences_maxx_ts_config} {switch_between_models_config} {traj_idx_to_experience_sv_folder_config} {load_chunking_experiences_v2_config} {history_chunking_obs_version_config} {load_chunking_experiences_from_real_config} {closed_loop_to_real_config} {use_transformer_model_config} {obj_pure_code_to_kine_traj_st_idx_config} {w_forecasting_config}"     
             
+        wandb_suffix = ""
+        if os.environ.get("WANDB_ACTIVATE", "false").lower() in ("1", "true", "yes"):
+            wandb_suffix = (
+                f" wandb_activate=True"
+                f" wandb_project={os.environ.get('WANDB_PROJECT', 'dextrack')}"
+                f" wandb_entity={os.environ.get('WANDB_ENTITY', '')}"
+                f" wandb_group={os.environ.get('WANDB_GROUP', '')}"
+            )
+        cmd = cmd + wandb_suffix
         print(cmd)
         os.system(cmd)
     

@@ -56,6 +56,7 @@ from tensorboardX import SummaryWriter
 
 from rl_games.common.experience import ExperienceBuffer
 # common agent torch #
+import glob
 import os
 
 
@@ -116,9 +117,19 @@ def batched_index_select(values, indices, dim = 1):
 class A2CSupervisedAgent(a2c_continuous.A2CAgent):
 
     def __init__(self, base_name, params):
-        
+
         self.params = params
         super().__init__(base_name, params)
+        # Rename rl_games' default `nn/` ckpt dir → `ckpt/`.
+        # rl_games' base __init__ created the empty `nn/` already; remove it.
+        old_nn_dir = os.path.join(self.experiment_dir, 'nn')
+        if os.path.isdir(old_nn_dir):
+            try:
+                os.rmdir(old_nn_dir)  # only succeeds if empty (it should be)
+            except OSError:
+                pass
+        self.nn_dir = os.path.join(self.experiment_dir, 'ckpt')
+        os.makedirs(self.nn_dir, exist_ok=True)
         # if self.normalize_value:
         #     self.value_mean_std = self.central_value_net.model.value_mean_std if self.has_central_value else self.model.value_mean_std
         # if self._normalize_amp_input:
@@ -3676,17 +3687,15 @@ class A2CSupervisedAgent(a2c_continuous.A2CAgent):
                 if len(b_losses) > 0:
                     self.writer.add_scalar('losses/bounds_loss', torch_ext.mean_list(b_losses).item(), frame)
 
-                if self.has_soft_aug:
+                if getattr(self, 'has_soft_aug', False):
                     self.writer.add_scalar('losses/aug_loss', np.mean(aug_losses), frame)
                 
                 
                 #### save the checkpoint in the corresponding file ####
                 if self.preload_experiences_tf:
-                    checkpoint_name = self.config['name'] + '_ep_' + str(epoch_num) 
-
                     if self.save_freq > 0:
                         if epoch_num % self.save_freq == 0:
-                            self.save(os.path.join(self.nn_dir, 'last_' + checkpoint_name))
+                            self.save(os.path.join(self.nn_dir, f'last_ep_{epoch_num}'))
 
                 if self.game_rewards.current_size > 0:
                     mean_rewards = self.game_rewards.get_mean()
@@ -3710,28 +3719,34 @@ class A2CSupervisedAgent(a2c_continuous.A2CAgent):
                     if self.has_self_play_config:
                         self.self_play_manager.update(self)
 
-                    checkpoint_name = self.config['name'] + '_ep_' + str(epoch_num) + '_rew_' + str(mean_rewards[0])
+                    ckpt_tag = f"ep_{epoch_num}_rew_{mean_rewards[0]:.2f}"
 
+                    # Periodic snapshot: `last_ep_<X>_rew_<Y>.pth` (kept across runs)
                     if self.save_freq > 0:
                         if epoch_num % self.save_freq == 0:
-                            self.save(os.path.join(self.nn_dir, 'last_' + checkpoint_name))
+                            self.save(os.path.join(self.nn_dir, 'last_' + ckpt_tag))
 
+                    # Best-so-far: `best_ep_<X>_rew_<Y>.pth`. Only one such file
+                    # exists at a time — we delete the previous best before saving.
                     if mean_rewards[0] > self.last_mean_rewards and epoch_num >= self.save_best_after:
                         print('saving next best rewards: ', mean_rewards)
                         self.last_mean_rewards = mean_rewards[0]
-                        self.save(os.path.join(self.nn_dir, self.config['name']))
-                        
-                        # NOTE: add the log to log best rewards and the per-epoch reward
+                        for old in glob.glob(os.path.join(self.nn_dir, 'best_ep_*.pth')):
+                            try:
+                                os.remove(old)
+                            except OSError:
+                                pass
+                        self.save(os.path.join(self.nn_dir, 'best_' + ckpt_tag))
+
+                        # Log every new best with epoch + reward.
                         logging_fn = os.path.join(self.nn_dir, "logs.txt")
-                        # logging_fn #
                         with open(logging_fn, "a") as wf:
                             wf.write(f"epoch: {epoch_num}, mean_rewards: {mean_rewards[0]}\n")
-                            wf.close()
 
                         if 'score_to_win' in self.config:
                             if self.last_mean_rewards > self.config['score_to_win']:
                                 print('Maximum reward achieved. Network won!')
-                                self.save(os.path.join(self.nn_dir, checkpoint_name))
+                                self.save(os.path.join(self.nn_dir, 'won_' + ckpt_tag))
                                 should_exit = True
                 # epoch num >= self.max_epochs #
                 
@@ -3740,8 +3755,8 @@ class A2CSupervisedAgent(a2c_continuous.A2CAgent):
                         print('WARNING: Max epochs reached before any env terminated at least once')
                         mean_rewards = -np.inf # mean rewards # 
 
-                    self.save(os.path.join(self.nn_dir, 'last_' + self.config['name'] + '_ep_' + str(epoch_num) \
-                        + '_rew_' + str(mean_rewards).replace('[', '_').replace(']', '_')))
+                    rew_str = str(mean_rewards).replace('[', '').replace(']', '')
+                    self.save(os.path.join(self.nn_dir, f'last_ep_{epoch_num}_rew_{rew_str}'))
                     print('MAX EPOCHS NUM!')
                     should_exit = True
 
@@ -3750,8 +3765,8 @@ class A2CSupervisedAgent(a2c_continuous.A2CAgent):
                         print('WARNING: Max frames reached before any env terminated at least once')
                         mean_rewards = -np.inf
 
-                    self.save(os.path.join(self.nn_dir, 'last_' + self.config['name'] + '_frame_' + str(self.frame) \
-                        + '_rew_' + str(mean_rewards).replace('[', '_').replace(']', '_')))
+                    rew_str = str(mean_rewards).replace('[', '').replace(']', '')
+                    self.save(os.path.join(self.nn_dir, f'last_frame_{self.frame}_rew_{rew_str}'))
                     print('MAX FRAMES NUM!')
                     should_exit = True
 

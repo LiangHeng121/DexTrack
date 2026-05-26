@@ -103,6 +103,15 @@ class A2CSupervisedAgentWForecasting(a2c_continuous.A2CAgent):
     def __init__(self, base_name, params): # supervised with forecasting #
         #  supervised agenet #
         super().__init__(base_name, params)
+        # Rename rl_games' default `nn/` ckpt dir → `ckpt/`.
+        old_nn_dir = os.path.join(self.experiment_dir, 'nn')
+        if os.path.isdir(old_nn_dir):
+            try:
+                os.rmdir(old_nn_dir)
+            except OSError:
+                pass
+        self.nn_dir = os.path.join(self.experiment_dir, 'ckpt')
+        os.makedirs(self.nn_dir, exist_ok=True)
         # if self.normalize_value:
         #     self.value_mean_std = self.central_value_net.model.value_mean_std if self.has_central_value else self.model.value_mean_std
         # if self._normalize_amp_input:

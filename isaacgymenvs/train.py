@@ -95,7 +95,12 @@ def preprocess_train_config(cfg, config_dict): # config dict #
     train_cfg['population_based_training'] = cfg.pbt.enabled
     train_cfg['pbt_idx'] = cfg.pbt.policy_idx if cfg.pbt.enabled else None
 
-    train_cfg['full_experiment_name'] = cfg.get('full_experiment_name')
+    # Only overwrite from top-level cfg if it's actually set; otherwise keep
+    # whatever was passed via `train.params.config.full_experiment_name=...` so
+    # CLI overrides aren't silently nulled.
+    top_level_fen = cfg.get('full_experiment_name')
+    if top_level_fen:
+        train_cfg['full_experiment_name'] = top_level_fen
 
     print(f'Using rl_device: {cfg.rl_device}')
     print(f'Using sim_device: {cfg.sim_device}')
@@ -129,7 +134,7 @@ def launch_rlg_hydra(cfg: DictConfig):
     
     from isaacgymenvs.utils.rlgames_utils import RLGPUEnv, RLGPUAlgoObserver, MultiObserver, ComplexObsRLGPUEnv
     from isaacgymenvs.utils.rlgames_utils import AMPRLGPUEnv
-    # from isaacgymenvs.utils.wandb_utils import WandbAlgoObserver
+    from isaacgymenvs.utils.wandb_utils import WandbAlgoObserver
     from rl_games.common import env_configurations, vecenv
     from rl_games.torch_runner import Runner
     from rl_games.algos_torch import model_builder
@@ -315,7 +320,9 @@ def launch_rlg_hydra(cfg: DictConfig):
     # exp_logging_dir = os.path.join('runs', cfg.train.params.config.name + '_{date:%d-%H-%M-%S}'.format(date=datetime.now()))
     
     exp_run_root_dir = cfg.train.params.config.log_path
-    exp_logging_dir = os.path.join(exp_run_root_dir, cfg.train.params.config.name + '_{date:%d-%H-%M-%S}'.format(date=datetime.now()))
+    # Use log_path directly as the experiment dir (the bash launcher already
+    # encodes seq + timestamp in log_path; no need to add another layer).
+    exp_logging_dir = exp_run_root_dir
     
     os.makedirs(exp_logging_dir, exist_ok=True)
     try:
