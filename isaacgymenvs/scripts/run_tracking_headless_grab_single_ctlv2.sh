@@ -887,6 +887,7 @@ mkdir -p "${log_path}"
 SCREEN_LOG="${log_path}/screen.log"
 echo "[run] run dir:    ${log_path}"
 echo "[run] screen log: ${SCREEN_LOG}"
+[[ -n "${RESUME_CKPT:-}" ]] && export checkpoint="${RESUME_CKPT}" && echo "[run] resuming from: ${RESUME_CKPT}"
 export PYTHONUNBUFFERED=1
 exec > >(stdbuf -oL tee "${SCREEN_LOG}") 2>&1
 ###########################################################

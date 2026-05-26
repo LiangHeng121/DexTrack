@@ -2104,10 +2104,10 @@ export sv_info_during_training=True
 
 ########## Short log_path + screen log redirect ##########
 # Test outputs (e.g. ts_to_hand_obj_obs_reset_1.npy) go here.
-# Layout: ./logs/<script_stem>/<seq>/<TS>/
+# Layout: ./logs_test/<script_stem>/<seq>/<TS>/
 RUN_TS=$(date +%Y%m%d_%H%M%S)
 SCRIPT_STEM="${SCRIPT_STEM:-$(basename "$0" .sh | sed 's/^run_tracking_headless_//' | sed 's/_test.*$//')}"
-export log_path="./logs/${SCRIPT_STEM}/${2:-run}/${RUN_TS}_test"
+export log_path="./logs_test/${SCRIPT_STEM}/${2:-run}/${RUN_TS}"
 mkdir -p "${log_path}"
 SCREEN_LOG="${log_path}/screen.log"
 echo "[run] run dir:    ${log_path}"

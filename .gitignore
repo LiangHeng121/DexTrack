@@ -21,6 +21,7 @@ isaacgymenvs/videos/*
 
 
 isaacgymenvs/logs/*
+isaacgymenvs/logs_test/*
 
 isaacgymenvs/ckpts/*
 

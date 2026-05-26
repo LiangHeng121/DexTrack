@@ -1424,8 +1424,8 @@ export log_path=./logs/isaacgym_rl_exp_grab_300_train_allegro_wcustomdamping_new
 
 
 #### fly hand, allegro, TACO settings ####
-export tracking_save_info_fn='/cephfs/yilaa/data/TACO_Tracking_PK/data'
-export tracking_data_sv_root='/cephfs/yilaa/data/TACO_Tracking_PK/data'
+export tracking_save_info_fn='./data/TACO_Tracking_PK_reduced/data'
+export tracking_data_sv_root='./data/TACO_Tracking_PK_reduced/data'
 # export tracking_info_st_tag='leap_passive_active_info_ori_grab_'
 export tracking_info_st_tag='passive_active_info_ori_grab_'
 
@@ -1506,6 +1506,7 @@ mkdir -p "${log_path}"
 SCREEN_LOG="${log_path}/screen.log"
 echo "[run] run dir:    ${log_path}"
 echo "[run] screen log: ${SCREEN_LOG}"
+[[ -n "${RESUME_CKPT:-}" ]] && export checkpoint="${RESUME_CKPT}" && echo "[run] resuming from: ${RESUME_CKPT}"
 export PYTHONUNBUFFERED=1
 exec > >(stdbuf -oL tee "${SCREEN_LOG}") 2>&1
 ###########################################################

@@ -29,10 +29,15 @@ class WandbAlgoObserver(AlgoObserver):
         wandb_unique_id = f"uid_{unique_token}"
         print(f"Wandb using unique id {wandb_unique_id}")
 
-        # Display name: prefer the rich run-dir name over the bare "policy".
+        # Display name: <seq>_<TS> from the last two segments of log_path
+        # (log_path layout: ./logs/<script_stem>/<seq>/<TS>).
         run_display_name = cfg.wandb_name or "policy"
         if log_path:
-            run_display_name = os.path.basename(log_path.rstrip("/")) or run_display_name
+            parts = [p for p in log_path.rstrip("/").split("/") if p not in (".", "")]
+            if len(parts) >= 2:
+                run_display_name = f"{parts[-2]}_{parts[-1]}"
+            elif parts:
+                run_display_name = parts[-1]
 
         wandb_kwargs = dict(
             project=cfg.wandb_project,

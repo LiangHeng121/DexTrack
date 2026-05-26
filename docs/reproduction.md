@@ -250,7 +250,7 @@ bash scripts/run_tracking_headless_grab_single_syntraj_wfranka.sh 1 ori_grab_s2_
 # Watch set
 screen -S train_watch -dm bash -c "
 conda activate dextrack && cd /mnt/beegfs/heng/DexTrack/isaacgymenvs &&
-bash scripts/run_tracking_headless_grab_single_wfranka.sh 2 s1_watch_set_2
+bash scripts/run_tracking_headless_grab_single_wfranka.sh 2 ori_grab_s1_watch_set_2
 "
 ```
 
@@ -327,6 +327,13 @@ export numEnvs=8000      # 或更小
 export minibatch_size=8000
 ```
 注意两者要同步降。
+
+### Q: `ValueError: Cannot parse the dataset type from obj_type: ...`
+序列名前缀错了。代码靠前缀判断数据集：
+- GRAB 序列必须以 `ori_grab_` 开头（例如 `ori_grab_s2_cubesmall_inspect_1`、`ori_grab_s1_watch_set_2`）
+- TACO 序列必须以 `taco_` 开头（例如 `taco_20231104_169`）
+
+README 里 wfranka watch 的训练命令写的是 `s1_watch_set_2`，**这是 README 的笔误**，正确写法是 `ori_grab_s1_watch_set_2`。doc 里阶段 5 命令已经修正。
 
 ### Q: Checkpoint 太多，硬盘吃紧
 脚本默认 `save_frequency=200`，每 200 epoch 存一次。训练完手动清旧的：
