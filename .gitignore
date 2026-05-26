@@ -56,3 +56,19 @@ isaacgymenvs/data/*
 
 isaacgymenvs/ckpts/*
 _setup.py
+
+
+isaacgym/
+
+isaacgymenvs/data/*
+isaacgymenvs/ckpts/*
+
+assets/rsc/*
+
+assets/datasetv4.1/*
+
+assets/meshdatav3_scaled/*
+
+retargeting/*
+
+__MACOSX/*
