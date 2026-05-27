@@ -130,6 +130,18 @@ class A2CSupervisedAgent(a2c_continuous.A2CAgent):
                 pass
         self.nn_dir = os.path.join(self.experiment_dir, 'ckpt')
         os.makedirs(self.nn_dir, exist_ok=True)
+
+        # Force ALL TB scalar writes to use self.epoch_num as the step. rl_games
+        # natively uses different steps (epoch_num for `*/iter`, frame_count for
+        # everything else), which causes wandb's sync_tensorboard +
+        # define_metric(step_metric=...) to misalign and truncate plots past
+        # some point. Pinning every metric to epoch_num gives a consistent
+        # x-axis across all panels.
+        self._orig_add_scalar = self.writer.add_scalar
+        def _add_scalar_by_epoch(tag, value, step=None):
+            return self._orig_add_scalar(tag, value, getattr(self, 'epoch_num', 0))
+        self.writer.add_scalar = _add_scalar_by_epoch
+
         # if self.normalize_value:
         #     self.value_mean_std = self.central_value_net.model.value_mean_std if self.has_central_value else self.model.value_mean_std
         # if self._normalize_amp_input:
