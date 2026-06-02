@@ -31,7 +31,7 @@ from manopth.manolayer import ManoLayer
 MANO_ROOT = os.path.join(os.path.dirname(__file__), "..", "retargeting", "manopth", "mano", "models")
 
 
-def grab_rhand_to_keypoints(grab_npz, flat_hand_mean=True, batch=256):
+def grab_rhand_to_keypoints(grab_npz, flat_hand_mean=True, batch=256, vtemp_ply=None):
     d = np.load(grab_npz, allow_pickle=True)
     rh = d["rhand"].item()["params"]
     global_orient = np.asarray(rh["global_orient"], dtype=np.float32)  # (T,3)
@@ -48,8 +48,15 @@ def grab_rhand_to_keypoints(grab_npz, flat_hand_mean=True, batch=256):
         flat_hand_mean=flat_hand_mean,
         side="right",
     )
-    betas = torch.zeros(1, 10)  # NOTE: GRAB uses a personalized vtemp (s2_rhand.ply);
-                                # betas=0 is a first-pass approximation (validate visually, B7).
+    # Use the subject's personalized hand shape (GRAB vtemp) instead of betas=0.
+    # betas=0 mis-places the fingertips ~0.5cm (gripping fingers hover off the object);
+    # vtemp reproduces the real human grip (index/middle land on the object surface).
+    if vtemp_ply is not None:
+        import trimesh
+        vtemp = np.asarray(trimesh.load(vtemp_ply, process=False).vertices, dtype=np.float32)
+        assert vtemp.shape == (778, 3), f"vtemp must be MANO 778 verts, got {vtemp.shape}"
+        ml.th_v_template = torch.from_numpy(vtemp).unsqueeze(0)
+    betas = torch.zeros(1, 10)  # shape comes from th_v_template (vtemp) when set
 
     kp = np.zeros((T, 21, 3), dtype=np.float32)
     for s in range(0, T, batch):
@@ -88,9 +95,10 @@ def main():
     ap.add_argument("--grab-npz", required=True)
     ap.add_argument("--out", default=None)
     ap.add_argument("--flat-hand-mean", type=lambda s: s.lower() != "false", default=True)
+    ap.add_argument("--vtemp", default=None, help="path to subject vtemp .ply (e.g. retargeting/assets/s2_rhand.ply)")
     args = ap.parse_args()
 
-    kp, meta = grab_rhand_to_keypoints(args.grab_npz, flat_hand_mean=args.flat_hand_mean)
+    kp, meta = grab_rhand_to_keypoints(args.grab_npz, flat_hand_mean=args.flat_hand_mean, vtemp_ply=args.vtemp)
     print(f"[grab_to_mano_keypoints] {args.grab_npz}")
     print(f"  meta: {meta}")
     sanity_check(kp)
