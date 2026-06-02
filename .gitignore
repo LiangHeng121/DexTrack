@@ -104,3 +104,6 @@ venv_render/
 
 # Patch scripts dropped to /tmp aren't tracked anyway, but ignore stray copies
 patch_scripts_v*.py
+
+*.zip
+*.tar.gz

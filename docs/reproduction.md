@@ -8,21 +8,30 @@
 
 ## 进度表
 
-| 阶段 | 内容 | 状态 | reward | 备注 |
+进度更新时间：2026-05-27 ~05:00 UTC
+
+| 阶段 | 内容 | 状态 | best reward (epoch) | 备注 |
 |---|---|---|---|---|
-| 0 | 环境 + 数据齐备 | ☐ | — | wh4 + 本地 Linux |
-| 1 | cubesmall_inspect 单序列 | ☐ | / | |
-| 2 | 与预训练对比 | ☐ | / | |
-| 3a | duck_inspect | ☐ | / | |
-| 3b | flute_pass | ☐ | / | |
-| 4a | TACO shovel `taco_20231104_169` | ☐ | / | |
-| 4b | TACO ladle `taco_20231104_186` | ☐ | / | |
-| 4c | TACO soap `taco_20231103_073` | ☐ | / | |
-| 5a | LEAP+Franka elephant | ☐ | / | |
-| 5b | LEAP+Franka hammer (sample 6) | ☐ | / | |
-| 5c | LEAP+Franka watch | ☐ | / | |
-| 6a | Generalist: duck 全部轨迹 | ☐ | / | |
-| 6b | Generalist: GRAB s2..s10 训练集 | ☐ | / | |
+| 0 | 环境 + 数据齐备 | ✅ | — | wh4 + 本地 Linux 都可跑训练/评估 |
+| 1 | cubesmall_inspect 单序列 | ✅ | **219.65** (ep 993) | 训到 1000 epoch，超过阈值 150 |
+| 2 | 与预训练对比 | ✅ | — | cubesmall: 预训 215 vs 自训 219 ✓；duck: 预训 188（README 阈值真实）vs 自训 -30（pipeline 训挂）；flute: 预训 28 vs 自训 41，**反超** |
+| 3a | duck_inspect (seed=42) | ⚠️ | **-30.08** (ep 154) | 1000 epoch 没收敛；pretrained ckpt 评估 reward 188，所以 README 阈值真的可达 |
+| 3a' | duck_inspect (seed=7, 重训) | 🏃 | — | GPU 0，从头训，验证 seed 影响 |
+| 3a'' | duck_inspect (seed=0, 重训) | 🏃 | — | GPU 1，从头训，验证 seed 影响 |
+| 3b | flute_pass | ⚠️ | **41.13** (ep 487) | 1000 epoch 没到阈值 100，但稳定上升；可 resume 继续训 |
+| 4a | TACO shovel `taco_20231104_169` | 🏃 | **111.43** (ep 333) | 在跑，已过阈值 50；当前 ep ~1086, rew ~83 |
+| 4b | TACO ladle `taco_20231104_186` | 🏃 | **176.82** (ep 450) | 跑过两次崩，第 3 次 resume 中；当前 ep ~476, rew ~167 ✓ |
+| 4c | TACO soap `taco_20231103_073` | ⚠️🏃 | **61.24** (ep 128) | best 在 ep 128 之后开始震荡发散，最近 ep 1252 rew -124，疑似策略崩了 |
+| 5a | LEAP+Franka elephant | 🏃 | **197.20** (ep 401) | 跑得最好的 wfranka；当前 ep ~415, rew ~197 |
+| 5b | LEAP+Franka hammer (sample 6) | 🏃 | **175.07** (ep 61) | 进展不错；当前 ep ~430, rew ~115（best 那一刻好，之后小幅震荡） |
+| 5c | LEAP+Franka watch | 🏃 | **31.43** (ep 298) | 缓慢上升；当前 ep ~307, rew ~30 |
+| 6a | Generalist: duck 全部轨迹 | ☐ | — | 未启动 |
+| 6b | Generalist: GRAB s2..s10 训练集 | ☐ | — | 未启动 |
+| W | **wuji 手** cubesmall_inspect（新本体接入，见 [wuji_integration_plan.md](wuji_integration_plan.md)） | 🏃 | — | GPU2，起步 -39.78（≈allegro），曲线回升中；run `logs/grab_single_wuji/ori_grab_s2_cubesmall_inspect_1/20260602_204633` |
+
+图例：
+- ✅ 完成（达到 README 阈值）　⚠️ 完成但 reward 偏低　⏸️ 暂停/未做　🏃 还在跑　☐ 未启动
+- ⚠️🏃 = 在跑但表现异常
 
 ---
 

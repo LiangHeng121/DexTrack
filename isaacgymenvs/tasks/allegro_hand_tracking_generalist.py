@@ -884,6 +884,14 @@ class AllegroHandTrackingGeneralist(BaseTask):
             self.inversed_joint_idxes_ordering_warm_th = torch.from_numpy(joint_idxes_inversed_ordering_warm).long().to(self.rl_device)
             
         
+        elif self.hand_type == 'wuji':
+            # wuji reference is already in Isaac Gym DOF order (built that way in B8) -> identity reorder
+            joint_idxes_ordering = list(range(26))
+            joint_idxes_ordering = np.array(joint_idxes_ordering).astype(np.int32)
+            joint_idxes_inversed_ordering = np.argsort(joint_idxes_ordering)
+            self.joint_idxes_inversed_ordering = joint_idxes_inversed_ordering
+            self.joint_idxes_ordering_th = torch.from_numpy(joint_idxes_ordering).long().to(self.rl_device)
+            self.inversed_joint_idxes_ordering_th = torch.from_numpy(joint_idxes_inversed_ordering).long().to(self.rl_device)
         else:
             joint_idxes_ordering = [_ for _ in range(10)] + [_ + 14 for _ in range(0, 8)] + [10, 11, 12, 13]
             joint_idxes_ordering = np.array(joint_idxes_ordering).astype(np.int32)
@@ -1374,6 +1382,9 @@ class AllegroHandTrackingGeneralist(BaseTask):
         if self.w_franka:
             self.nn_hand_dof = 23
             self.glb_hand_dof = 7
+        elif self.hand_type == 'wuji':
+            self.nn_hand_dof = 26  # 6 global + 20 finger (5 fingers x 4 joints)
+            self.glb_hand_dof = 6
         else:
             self.nn_hand_dof = 22
             self.glb_hand_dof = 6
@@ -1402,7 +1413,9 @@ class AllegroHandTrackingGeneralist(BaseTask):
         # 'ring': 'link_11_tip' # link 3 tip #
         # self.fingertips = ["link_15", "link_3", "link_7", "link_11"]
         if self.use_fingertips:
-            if self.hand_type == 'allegro':
+            if self.hand_type == 'wuji':
+                self.fingertips = ["right_finger1_tip_link", "right_finger2_tip_link", "right_finger3_tip_link", "right_finger4_tip_link", "right_finger5_tip_link"]
+            elif self.hand_type == 'allegro':
                 self.fingertips = ["link_15_tip", "link_3_tip", "link_7_tip", "link_11_tip"]
             elif self.hand_type == 'leap':
                 # body_names = { # leap fingertips #
@@ -1423,8 +1436,11 @@ class AllegroHandTrackingGeneralist(BaseTask):
                 # self.fingertips = ["thumb_fingertip", "fingertip", "fingertip_2", "fingertip_3"]
         else:
             self.fingertips = ["link_15", "link_3", "link_7", "link_11"]
-        self.hand_center = ["palm_link"]
-        self.num_fingertips = len(self.fingertips) 
+        if self.hand_type == 'wuji':
+            self.hand_center = ["right_palm_link"]
+        else:
+            self.hand_center = ["palm_link"]
+        self.num_fingertips = len(self.fingertips)
         
         
         self.mocap_sv_info_fn = '/cephfs/xueyi/data/GRAB_Tracking_PK/data/passive_active_info_ori_grab_s2_apple_lift.npy'
@@ -1864,7 +1880,13 @@ class AllegroHandTrackingGeneralist(BaseTask):
     def load_kinematics_chain(self):
         
         import pytorch_kinematics as pk
-        if self.hand_type == 'allegro':
+        if self.hand_type == 'wuji':
+            self.palm_name = 'right_palm_link'
+            self.first_tip_name = 'right_finger2_tip_link'
+            self.second_tip_name = 'right_finger3_tip_link'
+            self.third_tip_name = 'right_finger4_tip_link'
+            self.forth_tip_name = 'right_finger1_tip_link'
+        elif self.hand_type == 'allegro':
             # urdf_fn = "../assets/allegro_hand_description/urdf/allegro_hand_description_right_franka.urdf"
             # allegro_link_names = ['link_3_tip', 'link_3', 'link_2', 'link_1', 'link_0', 'link_7_tip', 'link_7', 'link_6', 'link_5', 'link_4', 'link_11_tip', 'link_11', 'link_10', 'link_9', 'link_8', 'link_15_tip', 'link_15', 'link_14', 'link_13', 'link_12', 'palm_link']
             
@@ -4612,7 +4634,9 @@ class AllegroHandTrackingGeneralist(BaseTask):
         # shadow_hand_asset_file = f"allegro_hand_description/urdf/allegro_hand_description_right_fly_ball_v2_nd_v2.urdf"
         self.asset_root = asset_root
         
-        if self.hand_type == 'allegro':
+        if self.hand_type == 'wuji':
+            shadow_hand_asset_file = f"wuji_hand_description/urdf/wuji_hand_right_fly.urdf"
+        elif self.hand_type == 'allegro':
             shadow_hand_asset_file = f"allegro_hand_description/urdf/allegro_hand_description_right_fly_v2.urdf"
             if self.w_franka:
                 shadow_hand_asset_file = f"allegro_hand_description/urdf/allegro_hand_description_right_franka.urdf"
@@ -5087,7 +5111,16 @@ class AllegroHandTrackingGeneralist(BaseTask):
         
         
         if self.use_fingertips: #
-            if self.hand_type == 'allegro': # 
+            if self.hand_type == 'wuji':
+                body_names = {  # wuji: finger1..5 = thumb,index,middle,ring,pinky
+                    'palm': 'right_palm_link',
+                    'thumb': 'right_finger1_tip_link',
+                    'index': 'right_finger2_tip_link',
+                    'middle': 'right_finger3_tip_link',
+                    'ring': 'right_finger4_tip_link',
+                    'pinky': 'right_finger5_tip_link',
+                }
+            elif self.hand_type == 'allegro': #
                 body_names = {
                     # 'wrist': 'robot0:wrist',
                     'palm': 'palm_link',
@@ -6015,12 +6048,18 @@ class AllegroHandTrackingGeneralist(BaseTask):
         
         if self.w_finger_pos_rew:
             
-            if self.hand_type == 'allegro':
-                palm_link_pos = self.tot_key_to_tot_link_pos['palm_link'] # nn_insts x nn_frames x 3 # 
-                thumb_link_pos =self.tot_key_to_tot_link_pos['link_15_tip'] # nn_insts x nn_frames x 3 # 
-                index_link_pos =self.tot_key_to_tot_link_pos['link_3_tip'] # nn_insts x nn_frames x 3 # 
-                middle_link_pos =self.tot_key_to_tot_link_pos['link_7_tip'] # nn_insts x nn_frames x 3 # 
-                ring_link_pos =self.tot_key_to_tot_link_pos['link_11_tip'] # nn_insts x nn_frames x 3 # 
+            if self.hand_type == 'wuji':
+                palm_link_pos = self.tot_key_to_tot_link_pos['right_palm_link']
+                thumb_link_pos = self.tot_key_to_tot_link_pos['right_finger1_tip_link']
+                index_link_pos = self.tot_key_to_tot_link_pos['right_finger2_tip_link']
+                middle_link_pos = self.tot_key_to_tot_link_pos['right_finger3_tip_link']
+                ring_link_pos = self.tot_key_to_tot_link_pos['right_finger4_tip_link']
+            elif self.hand_type == 'allegro':
+                palm_link_pos = self.tot_key_to_tot_link_pos['palm_link'] # nn_insts x nn_frames x 3 #
+                thumb_link_pos =self.tot_key_to_tot_link_pos['link_15_tip'] # nn_insts x nn_frames x 3 #
+                index_link_pos =self.tot_key_to_tot_link_pos['link_3_tip'] # nn_insts x nn_frames x 3 #
+                middle_link_pos =self.tot_key_to_tot_link_pos['link_7_tip'] # nn_insts x nn_frames x 3 #
+                ring_link_pos =self.tot_key_to_tot_link_pos['link_11_tip'] # nn_insts x nn_frames x 3 #
             elif self.hand_type == 'leap':
                 palm_link_pos = self.tot_key_to_tot_link_pos['palm_lower'] # nn_insts x nn_frames x 3 # 
                 thumb_link_pos =self.tot_key_to_tot_link_pos['thumb_tip_head'] # nn_insts x nn_frames x 3 # 
@@ -6215,12 +6254,18 @@ class AllegroHandTrackingGeneralist(BaseTask):
             # 'thumb_tip_head', 'index_tip_head', 'middle_tip_head', 'ring_tip_head'
             # envs_hand_qtars = batched_index_select(envs_hand_qtars, cur_progress_buf.unsqueeze(-1), dim=1).squeeze(1)
             # self.tot_key_to_tot_link_pos
-            if self.hand_type == 'allegro':
-                palm_link_pos = self.tot_key_to_tot_link_pos['palm_link'] # nn_insts x nn_frames x 3 # 
-                thumb_link_pos =self.tot_key_to_tot_link_pos['link_15_tip'] # nn_insts x nn_frames x 3 # 
-                index_link_pos =self.tot_key_to_tot_link_pos['link_3_tip'] # nn_insts x nn_frames x 3 # 
-                middle_link_pos =self.tot_key_to_tot_link_pos['link_7_tip'] # nn_insts x nn_frames x 3 # 
-                ring_link_pos =self.tot_key_to_tot_link_pos['link_11_tip'] # nn_insts x nn_frames x 3 # 
+            if self.hand_type == 'wuji':
+                palm_link_pos = self.tot_key_to_tot_link_pos['right_palm_link']
+                thumb_link_pos = self.tot_key_to_tot_link_pos['right_finger1_tip_link']
+                index_link_pos = self.tot_key_to_tot_link_pos['right_finger2_tip_link']
+                middle_link_pos = self.tot_key_to_tot_link_pos['right_finger3_tip_link']
+                ring_link_pos = self.tot_key_to_tot_link_pos['right_finger4_tip_link']
+            elif self.hand_type == 'allegro':
+                palm_link_pos = self.tot_key_to_tot_link_pos['palm_link'] # nn_insts x nn_frames x 3 #
+                thumb_link_pos =self.tot_key_to_tot_link_pos['link_15_tip'] # nn_insts x nn_frames x 3 #
+                index_link_pos =self.tot_key_to_tot_link_pos['link_3_tip'] # nn_insts x nn_frames x 3 #
+                middle_link_pos =self.tot_key_to_tot_link_pos['link_7_tip'] # nn_insts x nn_frames x 3 #
+                ring_link_pos =self.tot_key_to_tot_link_pos['link_11_tip'] # nn_insts x nn_frames x 3 #
             elif self.hand_type == 'leap':
                 palm_link_pos = self.tot_key_to_tot_link_pos['palm_lower'] # nn_insts x nn_frames x 3 # 
                 thumb_link_pos =self.tot_key_to_tot_link_pos['thumb_tip_head'] # nn_insts x nn_frames x 3 # 
@@ -12734,7 +12779,9 @@ def compute_hand_reward_tracking(
     delta_qpos[env_cond_type == 2] = delta_qpos[env_cond_type == 2] * env_cond_hand_masks[env_cond_type == 2] # envs x nn_hand_dof xxxxx envs x nn_hand_dof #
     
     
-    if delta_qpos.size(-1) == 22:
+    if delta_qpos.size(-1) == 22 or delta_qpos.size(-1) == 26:
+        # 6-dim global (3 trans + 3 euler rot) hands: allegro fly=22, wuji fly=26.
+        # delta_qpos[:, 6:] covers all finger joints (wuji: all 20 / 5 fingers).
         delta_qpos_value = torch.norm(delta_qpos[:, 6:], p=1, dim=-1)
         delta_hand_pos_value = torch.norm(delta_qpos[:, :3], p=1, dim=-1)
         delta_hand_rot_value = torch.norm(delta_qpos[:, 3:6], p=1, dim=-1)
@@ -13091,7 +13138,9 @@ def compute_hand_reward_tracking_rbpos(
     delta_qpos[env_cond_type == 2] = delta_qpos[env_cond_type == 2] * env_cond_hand_masks[env_cond_type == 2] # envs x nn_hand_dof xxxxx envs x nn_hand_dof #
     
     
-    if delta_qpos.size(-1) == 22:
+    if delta_qpos.size(-1) == 22 or delta_qpos.size(-1) == 26:
+        # 6-dim global (3 trans + 3 euler rot) hands: allegro fly=22, wuji fly=26.
+        # delta_qpos[:, 6:] covers all finger joints (wuji: all 20 / 5 fingers).
         delta_qpos_value = torch.norm(delta_qpos[:, 6:], p=1, dim=-1)
         delta_hand_pos_value = torch.norm(delta_qpos[:, :3], p=1, dim=-1)
         delta_hand_rot_value = torch.norm(delta_qpos[:, 3:6], p=1, dim=-1)
@@ -13462,7 +13511,9 @@ def compute_hand_reward_tracking_warm(
     delta_qpos[env_cond_type == 2] = delta_qpos[env_cond_type == 2] * env_cond_hand_masks[env_cond_type == 2] # envs x nn_hand_dof xxxxx envs x nn_hand_dof #
     
     
-    if delta_qpos.size(-1) == 22:
+    if delta_qpos.size(-1) == 22 or delta_qpos.size(-1) == 26:
+        # 6-dim global (3 trans + 3 euler rot) hands: allegro fly=22, wuji fly=26.
+        # delta_qpos[:, 6:] covers all finger joints (wuji: all 20 / 5 fingers).
         delta_qpos_value = torch.norm(delta_qpos[:, 6:], p=1, dim=-1)
         delta_hand_pos_value = torch.norm(delta_qpos[:, :3], p=1, dim=-1)
         delta_hand_rot_value = torch.norm(delta_qpos[:, 3:6], p=1, dim=-1)

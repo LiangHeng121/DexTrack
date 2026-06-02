@@ -272,6 +272,8 @@ class A2CSupervisedAgent(a2c_continuous.A2CAgent):
         
         if self.w_franka:
             self.nn_act_dims = 23
+        elif getattr(self.vec_env.env, 'hand_type', 'allegro') == 'wuji':
+            self.nn_act_dims = 26  # wuji: 6 global + 20 finger
         else:
             self.nn_act_dims = 22
         

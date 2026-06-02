@@ -640,9 +640,14 @@ if __name__ == "__main__":
             # mocap_save_info_fn = f"/cephfs/yilaa/data/GRAB _Tracking/data/leap_passive_active_info_{traj_grab_data_tag}.npy" # leap -- tracking data sv root#
             # mocap_sv_info_fn = f"{args.tracking_data_sv_root}/leap_passive_active_info_{traj_grab_data_tag}.npy"
             mocap_sv_info_fn = f"/cephfs/xueyi/data/TACO_Tracking_PK_LEAP/data/passive_active_info_ori_grab_s2_phone_call_1_interped_{traj_grab_data_tag}_v2_interpfr_60_interpfr2_60_nntrans_40.npy"
+        elif args.hand_type == 'wuji':
+            if args.dataset_type == 'grab':
+                mocap_sv_info_fn = f"{args.tracking_data_sv_root}/wuji_passive_active_info_{traj_grab_data_tag}.npy"
+            else:
+                raise ValueError
         else:
             raise ValueError
-        # 
+        #
         
         print(f"mocap_sv_info_fn: {mocap_sv_info_fn}")
         
@@ -1204,7 +1209,10 @@ if __name__ == "__main__":
         if args.hand_type == 'leap':
             starting_str = "leap_" + starting_str
             passive_active_info_tag = "leap_" + passive_active_info_tag
-        
+        elif args.hand_type == 'wuji':
+            starting_str = "wuji_" + starting_str
+            passive_active_info_tag = "wuji_" + passive_active_info_tag
+
         tot_tracking_data = os.listdir(tracking_data_sv_root)
         if args.num_frames == 150:
             tot_tracking_data = [fn for fn in tot_tracking_data if fn[: len(starting_str)] == starting_str and fn.endswith(".npy") and "_nf_" not in fn]
