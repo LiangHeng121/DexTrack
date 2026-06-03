@@ -27,10 +27,18 @@ def main():
     ap.add_argument("--kp", required=True, help="(T,21,3) keypoints, MediaPipe order, meters")
     ap.add_argument("--config", required=True)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--scale", type=float, default=1.0, help="scale hand about wrist before retargeting (use 1.25 to match DexTrack 5cm object)")
     args = ap.parse_args()
 
     kp = np.load(args.kp).astype(np.float64)  # (T,21,3)
     T = kp.shape[0]
+    # Scale the hand about the wrist (kp[0]) before retargeting. DexTrack scales
+    # the scene by ~1.25 (GRAB 4cm cube -> sim 5cm), so the wuji grip aperture
+    # (retargeted from the unscaled 4cm human) must be scaled to match the 5cm
+    # object, else the (too-small) grip pushes fingers into the bigger cube.
+    if args.scale != 1.0:
+        kp = kp[:, 0:1, :] + args.scale * (kp - kp[:, 0:1, :])
+        print(f"  scaled keypoints about wrist by {args.scale}")
     r = Retargeter.from_yaml(args.config, hand_side="right")
     r.reset()
 
