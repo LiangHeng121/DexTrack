@@ -107,3 +107,6 @@ patch_scripts_v*.py
 
 *.zip
 *.tar.gz
+# Local-only large dirs (GRAB dataset / vendored wuji lib)
+GRAB/
+wuji/
