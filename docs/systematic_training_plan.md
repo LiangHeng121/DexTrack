@@ -7,8 +7,8 @@
 | 任务设置 | 序列 | Allegro 手 | Wuji 手 |
 |---|---|---|---|
 | **单序列 A** | `ori_grab_s2_cubesmall_inspect_1` | ✅ rew **219**（复现）+ 视频 | ✅ offset 版 rew **181.93**（ep957）+ 视频；no-offset 版 🏃 训练中（默认）|
-| **单序列 B** | `ori_grab_s2_flute_pass_1` | 🏃 训练中 GPU1（ep323 rew37）| ⏳ 待 wuji 重定向 |
-| **多任务（generalist）** | 见下「多任务范围」 | 🏃 训练中（cubesmall/flute/合并 3 个）| ⏳ 待 wuji 重定向 |
+| **单序列 B** | `ori_grab_s2_flute_pass_1` | 🏃 GPU1 ep635 rew44 | 🏃 GPU6（no-offset，真实手型）|
+| **多任务（generalist）** | 见下「多任务范围」 | 🏃 cubesmall/flute/合并 3 个 | 🏃 GPU7 合并 44 条（real per-subject vtemp）|
 
 > Wuji reward 还在慢慢调（当前主推 no-offset 版，见下「offset/no-offset」）。Allegro 侧三种任务都已铺开训练。
 
@@ -76,16 +76,22 @@ wuji 参考有两版（区别仅最后一步「指尖外扩 offset」，详见 [
 
 已产出（cubesmall）：`cubesmall_allegro_policy.mp4`、`cubesmall_wuji_policy_offset.mp4`、`cubesmall_{allegro,wuji}_reference_physics.mp4`、`cubesmall_wuji_reference_physics_offset.mp4`。待产出：no-offset wuji 策略、flute、多任务各序列。
 
-## 当前状态（2026-06-04，5 个训练并行）
+## 当前状态（2026-06-04，**7 个训练并行 — 3×2 矩阵全格铺开**）
 
 | GPU | 任务 | 序列数 | 进度 |
 |---|---|---|---|
-| 1 | allegro flute 单序列 | 1 | ep323/1000 rew37（阈值~100，上升中）|
-| 2 | wuji cubesmall 单序列（**no-offset，默认**）| 1 | ep102/1000 rew132（offset 版同期~117）|
-| 3 | allegro cubesmall 多任务 | 26 | ep13/10000 |
-| 4 | allegro flute 多任务 | 18 | ep11/10000 |
-| 5 | allegro cubesmall+flute 合并 generalist | 44 | ep5/10000 |
+| 1 | allegro flute 单序列 | 1 | ep635/1000 rew44（阈值~100，上升中）|
+| 2 | wuji cubesmall 单序列（**no-offset，默认**）| 1 | ep387/1000 rew166（offset 版终 181）|
+| 3 | allegro cubesmall 多任务 | 26 | ep113/10000 |
+| 4 | allegro flute 多任务 | 18 | ep104/10000 |
+| 5 | allegro cubesmall+flute 合并 generalist | 44 | ep105/10000 |
+| 6 | wuji flute 单序列（no-offset，真实手型）| 1 | ep153/1000 rew-51（早期，flute 难）|
+| 7 | **wuji cubesmall+flute 合并 generalist** | 44 | ep5/10000 |
 
 已完成：allegro cubesmall rew219、wuji cubesmall offset rew181（ep957，归档为 `_offset`）。
+
+**wuji 多任务数据已就绪**：44 条 cubesmall+flute 序列全部重定向（no-offset，**真实 per-subject 手型** vtemp，s1–s10 全覆盖），用 `wuji_pipeline/batch_retarget_multitask.py` 批量生成。需要 GRAB `Subject Shape Templates`（male+female）提供各 subject 手型。
+
+可视化：`render_videos/` 已有 cubesmall（policy+reference）、flute（reference），及 `reference_samples/`（抽样 wuji+allegro 参考回放）。渲染器 `wuji_isaacgym_playback.py` 支持 `--hand allegro|wuji` + `--ref`。
 
 相关文档：[reproduction.md](reproduction.md)（allegro 复现）、[wuji_integration_plan.md](wuji_integration_plan.md)（wuji 接入）、[wuji_retargeting_and_visualization.md](wuji_retargeting_and_visualization.md)（重定向+可视化操作）。
