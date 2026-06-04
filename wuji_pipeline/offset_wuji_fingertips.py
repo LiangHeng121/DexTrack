@@ -10,13 +10,18 @@ consistent for any object pose/shape (no orientation-dependent behavior).
 
 Run in wuji-retarget env (pinocchio + trimesh). Saves plain array.
 """
+import argparse
 import numpy as np
 import pinocchio as pin
 import trimesh
 
+_ap = argparse.ArgumentParser()
+_ap.add_argument("--ref", default="isaacgymenvs/data/GRAB_Tracking_PK_WUJI_v1/data/wuji_passive_active_info_ori_grab_s2_cubesmall_inspect_1_nf_300.npy")
+_ap.add_argument("--out", default="/tmp/wuji_offset_states.npy", help="if .npy dict path, writes full ref dict (object from --ref + offset fingers); legacy default writes q_all only")
+_a = _ap.parse_args()
 FLY = "assets/wuji_hand_description/urdf/wuji_hand_right_fly.urdf"
 MESHDIR = "assets/wuji_hand_description/meshes/right"
-REF = "isaacgymenvs/data/GRAB_Tracking_PK_WUJI_v1/data/wuji_passive_active_info_ori_grab_s2_cubesmall_inspect_1_nf_300.npy"
+REF = _a.ref
 ITERS = 20
 STEP = 0.5
 DAMP = 1e-3
@@ -78,5 +83,13 @@ for t in range(T):
             qq[fjq[f]] = np.clip(qq[fjq[f]] + STEP * dq, lo[fjq[f]], hi[fjq[f]])
     q_all[t, 6:] = qq[r2p[6:]]
 
-np.save("/tmp/wuji_offset_states.npy", q_all.astype(np.float32))
-print(f"[offset] applied pure-hand offset to all {T} frames -> /tmp/wuji_offset_states.npy")
+if _a.out.endswith(".npy") and _a.out != "/tmp/wuji_offset_states.npy":
+    out = dict(object_transl=ref["object_transl"], object_rot_quat=ref["object_rot_quat"],
+               robot_delta_states_weights_np=q_all.astype(np.float32))
+    import os
+    os.makedirs(os.path.dirname(_a.out), exist_ok=True)
+    np.save(_a.out, out)
+    print(f"[offset] applied pure-hand offset to all {T} frames -> {_a.out} (full ref dict)")
+else:
+    np.save("/tmp/wuji_offset_states.npy", q_all.astype(np.float32))
+    print(f"[offset] applied pure-hand offset to all {T} frames -> /tmp/wuji_offset_states.npy")
