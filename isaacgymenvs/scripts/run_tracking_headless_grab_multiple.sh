@@ -1,6 +1,6 @@
 
 ########## Wandb (set WANDB_ACTIVATE=false to disable) ##########
-SCRIPT_STEM="$(basename "${BASH_SOURCE[0]}" .sh | sed 's/^run_tracking_headless_//')"
+SCRIPT_STEM="${SCRIPT_STEM:-$(basename "${BASH_SOURCE[0]}" .sh | sed 's/^run_tracking_headless_//')}"
 export WANDB_ACTIVATE="${WANDB_ACTIVATE:-true}"
 export WANDB_PROJECT="${WANDB_PROJECT:-dextrack}"
 export WANDB_ENTITY="${WANDB_ENTITY:-liangheng-peking-university}"
