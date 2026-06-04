@@ -735,7 +735,12 @@ export st_idx=${GPUS}
 # (seq and TS on separate levels so all runs of one seq group together)
 RUN_TS=$(date +%Y%m%d_%H%M%S)
 SCRIPT_STEM="${SCRIPT_STEM:-$(basename "$0" .sh | sed 's/^run_tracking_headless_//')}"
-export log_path="./logs/${SCRIPT_STEM}/${2:-run}/${RUN_TS}"
+RUN_MID="${2:-run}"
+if [ -z "$2" ] && [ -n "$3" ]; then
+  _obj=$(basename "$3" .npy | sed 's/^inst_tag_list_obj_//; s/^inst_tag_list_//')
+  RUN_MID="${hand_type}_${_obj}"   # -> wandb name <hand>_<obj>_<TS>, unique+descriptive
+fi
+export log_path="./logs/${SCRIPT_STEM}/${RUN_MID}/${RUN_TS}"
 mkdir -p "${log_path}"
 SCREEN_LOG="${log_path}/screen.log"
 echo "[run] run dir:    ${log_path}"
