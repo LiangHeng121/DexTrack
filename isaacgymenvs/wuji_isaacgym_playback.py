@@ -21,13 +21,16 @@ ap.add_argument("--ref", action="store_true")
 ap.add_argument("--env", type=int, default=1)
 ap.add_argument("--gpu", type=int, default=0)
 ap.add_argument("--obj_code", default="ori_grab_s2_cubesmall_inspect_1")
+ap.add_argument("--hand", default="wuji", choices=["wuji", "allegro"])
 ap.add_argument("--stride", type=int, default=1)
 ap.add_argument("--W", type=int, default=720)
 ap.add_argument("--H", type=int, default=720)
 args = ap.parse_args()
 
-ORDER = ["WRJ0x", "WRJ0y", "WRJ0z", "WRJ0rx", "WRJ0ry", "WRJ0rz"] + \
-        [f"right_finger{f}_joint{j}" for f in range(1, 6) for j in range(1, 5)]
+HAND_URDF = {
+    "wuji": "wuji_hand_description/urdf/wuji_hand_right_fly.urdf",
+    "allegro": "allegro_hand_description/urdf/allegro_hand_description_right_fly_v2.urdf",
+}[args.hand]
 
 # ---- load motion ----
 if args.ref:
@@ -60,7 +63,7 @@ gym.add_ground(sim, pp)
 
 asset_root = "../assets"
 ho = gymapi.AssetOptions(); ho.fix_base_link = True; ho.disable_gravity = True
-hand_asset = gym.load_asset(sim, asset_root, "wuji_hand_description/urdf/wuji_hand_right_fly.urdf", ho)
+hand_asset = gym.load_asset(sim, asset_root, HAND_URDF, ho)
 oo = gymapi.AssetOptions(); oo.fix_base_link = True; oo.disable_gravity = True; oo.use_mesh_materials = True
 obj_file = f"meshdatav3_scaled/sem/{args.obj_code}/coacd/coacd_1_vis.urdf"
 if not os.path.exists(os.path.join(asset_root, obj_file)):
@@ -72,12 +75,10 @@ pose = gymapi.Transform(); pose.p = gymapi.Vec3(0, 0, 0)
 hand_actor = gym.create_actor(env, hand_asset, pose, "hand", 0, 0)
 obj_actor = gym.create_actor(env, obj_asset, pose, "obj", 0, 0)
 
-# DOF name -> asset index, build permutation from ORDER
-dof_names = gym.get_asset_dof_names(hand_asset)
-name2i = {n: i for i, n in enumerate(dof_names)}
-perm = np.array([name2i[n] for n in ORDER])
-ndof = len(dof_names)
-print(f"asset dof ({ndof}): {dof_names[:3]}...  perm[:6]={perm[:6]}")
+# shadow_hand_dof_pos is saved in raw sim/asset DOF order, so set DOF directly.
+ndof = gym.get_asset_dof_count(hand_asset)
+assert hand.shape[1] == ndof, f"rollout dof {hand.shape[1]} != {args.hand} asset dof {ndof}"
+print(f"{args.hand} asset dof = {ndof}")
 
 # drive DOF stiffly so the hand holds the set pose during the 1 physics step
 dp = gym.get_actor_dof_properties(env, hand_actor)
@@ -98,7 +99,7 @@ frames = []
 for t in range(0, T, args.stride):
     # set hand DOF
     ds = np.zeros(ndof, dtype=gymapi.DofState.dtype)
-    ds["pos"][perm] = hand[t]
+    ds["pos"][:] = hand[t]
     gym.set_actor_dof_states(env, hand_actor, ds, gymapi.STATE_ALL)
     gym.set_actor_dof_position_targets(env, hand_actor, ds["pos"].astype(np.float32))
     # set object root pose
