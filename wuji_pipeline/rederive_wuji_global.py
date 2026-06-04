@@ -15,16 +15,21 @@ Steps:
 
 Run in wuji-retarget env (pinocchio).
 """
+import argparse
 import numpy as np
 import pinocchio as pin
 from scipy.spatial.transform import Rotation as Rot
 
-GRAB = "GRAB/unzipped/grab/s2/cubesmall_inspect_1.npz"
-ALLEGRO = "isaacgymenvs/data/GRAB_Tracking_PK_reduced_300/data/passive_active_info_ori_grab_s2_cubesmall_inspect_1_nf_300.npy"
-KP21 = "wuji_pipeline/out/s2_cubesmall_inspect_1_mano_kp21.npy"   # (776,21,3) GRAB frame
+ap = argparse.ArgumentParser()
+ap.add_argument("--grab", default="GRAB/unzipped/grab/s2/cubesmall_inspect_1.npz")
+ap.add_argument("--allegro", default="isaacgymenvs/data/GRAB_Tracking_PK_reduced_300/data/passive_active_info_ori_grab_s2_cubesmall_inspect_1_nf_300.npy")
+ap.add_argument("--kp21", default="wuji_pipeline/out/s2_cubesmall_inspect_1_mano_kp21.npy")
+ap.add_argument("--out", default="isaacgymenvs/data/GRAB_Tracking_PK_WUJI_v1/data/wuji_passive_active_info_ori_grab_s2_cubesmall_inspect_1_nf_300.npy")
+ap.add_argument("--c0", type=int, default=200, help="GRAB crop start (= assemble fit_crop c0)")
+ap.add_argument("--c1", type=int, default=499, help="GRAB crop end (= assemble fit_crop c1)")
+_a = ap.parse_args()
+GRAB, ALLEGRO, KP21, OUT, C0, C1 = _a.grab, _a.allegro, _a.kp21, _a.out, _a.c0, _a.c1
 FLY = "assets/wuji_hand_description/urdf/wuji_hand_right_fly.urdf"
-OUT = "isaacgymenvs/data/GRAB_Tracking_PK_WUJI_v1/data/wuji_passive_active_info_ori_grab_s2_cubesmall_inspect_1_nf_300.npy"
-C0, C1 = 200, 499           # crop GRAB[C0:C1]->300 (validated in B5, corr=1.0)
 TIP_KP = [4, 8, 12, 16, 20]  # MediaPipe-order fingertips in kp21 (thumb,index,middle,ring,pinky)
 
 
