@@ -2,15 +2,15 @@
 
 本文件定义当前阶段的训练任务矩阵与可视化目标。目标：对 **3 种任务设置** × **2 种本体**共 **6 个组合**各训练一个跟踪策略，并对每个都产出真实 Isaac Gym 渲染视频。
 
-## 任务矩阵
+## 任务矩阵（进度截至 2026-06-04）
 
 | 任务设置 | 序列 | Allegro 手 | Wuji 手 |
 |---|---|---|---|
-| **单序列 A** | `ori_grab_s2_cubesmall_inspect_1` | ✅ 已复现 rew **219.65** | ✅ 已训 rew **181.93**（ep957，1000ep 跑完）|
-| **单序列 B** | `ori_grab_s2_flute_pass_1` | 🏃 **训练中**（本轮启动）| ⏳ 待办（需先做 wuji 重定向参考）|
-| **多任务（generalist）** | 见下「多任务范围」 | ⏳ 待训 | ⏳ 待办（需多序列 wuji 重定向）|
+| **单序列 A** | `ori_grab_s2_cubesmall_inspect_1` | ✅ rew **219**（复现）+ 视频 | ✅ offset 版 rew **181.93**（ep957）+ 视频；no-offset 版 🏃 训练中（默认）|
+| **单序列 B** | `ori_grab_s2_flute_pass_1` | 🏃 训练中 GPU1（ep323 rew37）| ⏳ 待 wuji 重定向 |
+| **多任务（generalist）** | 见下「多任务范围」 | 🏃 训练中（cubesmall/flute/合并 3 个）| ⏳ 待 wuji 重定向 |
 
-> Wuji 的 reward 还要继续慢慢调，单序列 B 和多任务的 wuji 版本等 reward 调好、重定向管线复用后再做。本轮先把 **Allegro 的剩余两个（flute 单序列 + 多任务）**训上。
+> Wuji reward 还在慢慢调（当前主推 no-offset 版，见下「offset/no-offset」）。Allegro 侧三种任务都已铺开训练。
 
 ## 本体与控制设置（保持一致才可比）
 
@@ -33,38 +33,59 @@ bash scripts/run_tracking_headless_grab_single.sh <GPU> ori_grab_s2_flute_pass_1
 ### Allegro 多任务（generalist）
 ```bash
 bash scripts/run_tracking_headless_grab_multiple.sh <GPU> <SUBJ_NM> <SEQ_TAG_LIST>
-# SUBJ_NM 与 SEQ_TAG_LIST 都为空 = GRAB 训练集所有 subject s2..s10（完整 generalist，重）
-# 或给 .npy 实例列表（如 ../assets/inst_tag_list_obj_duck.npy）限定子集
+# $2=SUBJ_NM(留空) $3=tag列表.npy。空列表='' = 完整 s2..s10(~1269条,很重)
 ```
+本轮用的 per-object 列表（`{tag:1}` 字典，0维 object 数组，在 `assets/`）：
+| 列表 | 序列数 | 文件 |
+|---|---|---|
+| cubesmall | 26 | `assets/inst_tag_list_obj_cubesmall.npy` |
+| flute | 18 | `assets/inst_tag_list_obj_flute.npy` |
+| cubesmall+flute（合并跨物体）| 44 | `assets/inst_tag_list_obj_cubesmall_flute.npy` |
+| duck（README 现成例子）| 23 | `assets/inst_tag_list_obj_duck.npy` |
 
-### Wuji 单序列（已有 cubesmall）
+> 列表生成：扫 `data/GRAB_Tracking_PK_reduced_300/data/passive_active_info_*_<obj>_*.npy`，去前后缀得 tag，存成 `{tag:1}` 字典。
+> **多任务 = 纯 RL generalist**：脚本默认 `supervised_loss_coef=0`（BC 蒸馏关闭，论文那套 specialist 预优化轨迹未释出、本地无），所以是干净的纯 RL 多轨迹跟踪。`max_epochs=10000`，比单序列(1000)久很多；每条轨迹平均只分到 `numEnvs/序列数` 个 env（如 40000/26≈1500），收敛慢。
+
+### Wuji 单序列（cubesmall）
 ```bash
+# 默认 = no-offset 版
 bash scripts/run_tracking_headless_grab_single_wuji.sh <GPU> ori_grab_s2_cubesmall_inspect_1
+# offset 版（加后缀指向独立目录）
+WUJI_DATA_DIR=./data/GRAB_Tracking_PK_WUJI_OFFSET_v1/data SCRIPT_STEM=grab_single_wuji_offset \
+    bash scripts/run_tracking_headless_grab_single_wuji.sh <GPU> ori_grab_s2_cubesmall_inspect_1
 ```
 
-## 可视化（6 个都要）
+## offset / no-offset（默认 = no-offset）
 
-统一用真实 Isaac Gym 相机渲染器 `isaacgymenvs/wuji_isaacgym_playback.py`（无头相机传感器，走 GPU Vulkan）：
-1. 跑测试脚本得到 rollout（`logs_test/.../ts_to_hand_obj_obs_reset_1.npy`）；
-2. `python wuji_isaacgym_playback.py --src <rollout> --env <好的env> --gpu <id> --out <mp4>`。
+wuji 参考有两版（区别仅最后一步「指尖外扩 offset」，详见 [wuji_retargeting_and_visualization.md](wuji_retargeting_and_visualization.md)）。**默认无后缀 = no-offset；带 offset 的加 `_offset` 后缀**：
 
-**待办**：当前 `wuji_isaacgym_playback.py` 写死了 wuji fly URDF + 26-DOF 顺序。要支持 Allegro，需把**手 URDF 路径 + DOF 顺序 + 指尖 link 名**参数化（Allegro fly URDF = `allegro_hand_description/urdf/allegro_hand_description_right_fly_v2.urdf`，22 DOF）。多任务可视化时每个被跟踪物体各渲一段。
+| | 默认 = no-offset | offset（保留）|
+|---|---|---|
+| 数据 | `data/GRAB_Tracking_PK_WUJI_v1/` | `data/GRAB_Tracking_PK_WUJI_OFFSET_v1/` |
+| 日志 | `logs/grab_single_wuji/` | `logs/grab_single_wuji_offset/` |
+| ckpt | `ckpts/wuji_cubesmall_inspect_best.pth` | `ckpts/wuji_cubesmall_inspect_offset_best.pth`（ep957 rew181）|
+| 视频 | `render_videos/cubesmall_wuji_*.mp4` | `render_videos/cubesmall_wuji_*_offset.mp4` |
 
-## 多任务范围（待确认）
+## 多任务范围（已定 = cubesmall + flute）
 
-generalist 的序列集合需定，直接影响工作量（尤其 wuji 要逐序列重定向）。候选：
-- **(a) 小集合**：cubesmall + flute + 少数几条（便于 wuji 也能重定向、3×2 严格可比）。
-- **(b) 单物体多序列**：如所有 cubesmall 或所有 flute 序列。
-- **(c) 完整 generalist**：GRAB s2..s10 全量（最接近论文，但 wuji 重定向成本极高）。
+用 **per-object generalist**：分别训 cubesmall(26)、flute(18)，再加一个合并跨物体(44)。理由：和单任务同物体可比；对 wuji 可行（以后只需重定向这两个物体的几十条，而非完整 s2–s10 的上千条）。完整 generalist(s2–s10) 是论文级，allegro 可行但 wuji 不现实，暂不做。
 
-→ 默认建议 (a)，待用户确认后再定 wuji 侧。
+## 可视化（真实 Isaac Gym 渲染）
 
-## 当前状态（2026-06-03）
+渲染器 `isaacgymenvs/wuji_isaacgym_playback.py` 已**泛化**（`--hand allegro|wuji`，无头相机传感器，allegro 22DOF / wuji 26DOF 通用）。流程：跑 test → 拿 rollout → 渲染。三种视频（策略抓取 / 参考+物理 / 离线 mesh）的完整命令见 [wuji_retargeting_and_visualization.md](wuji_retargeting_and_visualization.md)。视频统一收在仓库根 `render_videos/`。
 
-- Allegro cubesmall：✅ rew 219（复现完成）
-- Allegro flute：🏃 本轮启动训练
-- Allegro 多任务：⏳ 待启动（范围待定）
-- Wuji cubesmall：✅ rew 181.93（ep957）；稳定 ckpt `isaacgymenvs/ckpts/wuji_cubesmall_inspect_best.pth`
-- Wuji flute / 多任务：⏳ 等 wuji reward 调好 + 重定向复用
+已产出（cubesmall）：`cubesmall_allegro_policy.mp4`、`cubesmall_wuji_policy_offset.mp4`、`cubesmall_{allegro,wuji}_reference_physics.mp4`、`cubesmall_wuji_reference_physics_offset.mp4`。待产出：no-offset wuji 策略、flute、多任务各序列。
 
-相关文档：[reproduction.md](reproduction.md)（allegro 复现细节）、[wuji_integration_plan.md](wuji_integration_plan.md)（wuji 接入与重定向管线）。
+## 当前状态（2026-06-04，5 个训练并行）
+
+| GPU | 任务 | 序列数 | 进度 |
+|---|---|---|---|
+| 1 | allegro flute 单序列 | 1 | ep323/1000 rew37（阈值~100，上升中）|
+| 2 | wuji cubesmall 单序列（**no-offset，默认**）| 1 | ep102/1000 rew132（offset 版同期~117）|
+| 3 | allegro cubesmall 多任务 | 26 | ep13/10000 |
+| 4 | allegro flute 多任务 | 18 | ep11/10000 |
+| 5 | allegro cubesmall+flute 合并 generalist | 44 | ep5/10000 |
+
+已完成：allegro cubesmall rew219、wuji cubesmall offset rew181（ep957，归档为 `_offset`）。
+
+相关文档：[reproduction.md](reproduction.md)（allegro 复现）、[wuji_integration_plan.md](wuji_integration_plan.md)（wuji 接入）、[wuji_retargeting_and_visualization.md](wuji_retargeting_and_visualization.md)（重定向+可视化操作）。
