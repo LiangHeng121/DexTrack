@@ -76,30 +76,36 @@ wuji 参考有两版（区别仅最后一步「指尖外扩 offset」，详见 [
 
 已产出（cubesmall）：`cubesmall_allegro_policy.mp4`、`cubesmall_wuji_policy_offset.mp4`、`cubesmall_{allegro,wuji}_reference_physics.mp4`、`cubesmall_wuji_reference_physics_offset.mp4`。待产出：no-offset wuji 策略、flute、多任务各序列。
 
-## 已完成（单序列）
+> 所有 log 路径相对 `isaacgymenvs/`；ckpt 在各 run dir 的 `ckpt/`。
 
-| 任务 | best | test | 视频 | 备注 |
-|---|---|---|---|---|
-| allegro cubesmall | 219 | 216 | `cubesmall_allegro_policy.mp4` | ✅ |
-| allegro flute | 43.55 | 39 | `flute_allegro_policy.mp4` | 弱（阈值~100 未达）|
-| wuji cubesmall offset | 181.93 | 176 | `cubesmall_wuji_policy_offset.mp4` | ✅ |
-| wuji cubesmall **no-offset**（默认）| 175.47 | 172 | `cubesmall_wuji_policy.mp4` | ✅ 100% 举起 |
-| wuji flute no-offset | **-42** | -46 | `flute_wuji_policy.mp4` | ❌ 失败（0% 举起）|
-| wuji flute offset | **-29.46** | — | — | ❌ 失败（offset 也没救活）|
+## 已完成（单序列，6 个）
 
-ckpt：`ckpts/{s2_cubesmall_inspect_ckpt, allegro_flute_pass_best, wuji_cubesmall_inspect_best(no-offset默认), wuji_cubesmall_inspect_offset_best}.pth`。
-**结论：flute_pass 对 wuji 太难**（细杆 2cm，pass 动作只 43% 帧接触）——no-offset/offset 两版单序列都训不起来（rew 负）。allegro flute 也只 43（阈值未达），flute 本身难。
+| 本体 | 物体 | 变体 | best | test | 视频 | log 路径 |
+|---|---|---|---|---|---|---|
+| allegro | cubesmall | — | 219 | 216 | `cubesmall_allegro_policy.mp4` | `logs/grab_single/ori_grab_s2_cubesmall_inspect_1/20260602_114018` |
+| allegro | flute | — | 43.55 | 39 | `flute_allegro_policy.mp4`（弱）| `logs/grab_single/ori_grab_s2_flute_pass_1/20260604_040442` |
+| wuji | cubesmall | **offset** | 181.93 | 176 | `cubesmall_wuji_policy_offset.mp4` | `logs/grab_single_wuji_offset/ori_grab_s2_cubesmall_inspect_1/20260603_005900` |
+| wuji | cubesmall | **no-offset**(默认) | 175.47 | 172 | `cubesmall_wuji_policy.mp4`（100%举起）| `logs/grab_single_wuji/ori_grab_s2_cubesmall_inspect_1/20260604_045444` |
+| wuji | flute | **no-offset** | **-42** ❌ | -46 | `flute_wuji_policy.mp4` | `logs/grab_single_wuji/ori_grab_s2_flute_pass_1/20260604_053736` |
+| wuji | flute | **offset** | **-29.46** ❌ | — | — | `logs/grab_single_wuji_flute_offset/ori_grab_s2_flute_pass_1/20260604_190646` |
 
-## 训练中（2026-06-04，多任务 6 个并行，~ep2300–3300/10000）
+稳定 ckpt 副本：`ckpts/{s2_cubesmall_inspect_ckpt, allegro_flute_pass_best, wuji_cubesmall_inspect_best(=no-offset默认), wuji_cubesmall_inspect_offset_best}.pth`。
+**结论：flute_pass 对 wuji 太难**（2cm 细杆，pass 动作只 43% 帧接触）——no-offset/offset 两版都失败（rew 负）。allegro flute 也只 43，flute 本身难。
 
-| wandb name | 任务 | 序列 | epoch | best(mean rew) |
-|---|---|---|---|---|
-| `allegro_cubesmall_multi` | allegro cube | 26 | 3317 | **132.81** |
-| `allegro_flute_multi` | allegro flute | 18 | 3006 | **165.24** |
-| `allegro_combined_multi` | allegro 合并 | 44 | 3208 | **159.88** |
-| `wuji_cubesmall_multi` | wuji cube | 26 | 2678 | 53.38 |
-| `wuji_flute_multi` | wuji flute | 18 | 2330 | -30.76 |
-| `wuji_combined_multi` | wuji 合并 | 44 | 2788 | -28.41 |
+## 训练中（多任务，6 个并行，~ep2300–3330/10000）
+
+因磁盘满崩过一轮，全部从 ckpt resume；下表列 **resume 前(崩溃)→ resume 后(在跑)** 两个 run dir（都在 `logs/`）。
+
+| wandb name | 物体/序列 | best now | epoch | resume 前(崩) | resume 后(在跑) |
+|---|---|---|---|---|---|
+| `allegro_cubesmall_multi` | cubesmall 26 | **132.81** | 3330 | `grab_multiple/run/20260604_051258`(ep1047,b161)| `grab_multiple/run/20260604_192554` |
+| `allegro_flute_multi` | flute 18 | **165.41** | 3017 | `grab_multiple/run/20260604_051453`(ep980,b159)| `grab_multiple/run/20260604_185022` |
+| `allegro_combined_multi` | 合并 44 | **159.88** | 3220 | `grab_multiple/run/20260604_051909`(ep1035,b149)| `grab_multiple/run/20260604_192556` |
+| `wuji_cubesmall_multi` | cubesmall 26 | 53.38 | 2690 | `grab_multiple_wuji_cubesmall/run/20260604_100955`(ep600,b15)| `grab_multiple_wuji_cubesmall/run/20260604_185559` |
+| `wuji_flute_multi` | flute 18 | -30.76 | 2340 | `grab_multiple_wuji_flute/run/20260604_100955`(ep561,b-60)| `grab_multiple_wuji_flute/run/20260604_185022` |
+| `wuji_combined_multi` | 合并 44 | -28.41 | 2799 | `grab_multiple_wuji/run/20260604_063421`(ep868,b-59)| `grab_multiple_wuji/run/20260604_185022` |
+
+> 注：`wuji_cubesmall_multi` resume 前后之间还有个废弃的 `…/20260604_185022`——第一次 resume 用了**损坏的** `last_ep_600`(磁盘满写截断)失败，改用完整 `best_ep_583` 重 resume 到 `185559`。
 
 - wandb 名已全唯一（`<hand>_<obj>_multi`），不靠 group 区分（API 改名 + 脚本 log_path 中段改 `<hand>_<obj>`）。
 - **观察**：allegro 三个多任务都健康（132–165）；wuji cubesmall 多任务正（53），但 **wuji flute / 合并仍负**（被 flute 难度拖累，和单序列一致）。
