@@ -507,8 +507,8 @@ HEADKESS=$4
 
 ##### single instnace training setting #####
 export tracking_info_st_tag='wuji_passive_active_info_'
-export tracking_save_info_fn='./data/GRAB_Tracking_PK_WUJI_v1/data'
-export tracking_data_sv_root='./data/GRAB_Tracking_PK_WUJI_v1/data'
+export tracking_save_info_fn="${WUJI_DATA_DIR:-./data/GRAB_Tracking_PK_WUJI_v1/data}"
+export tracking_data_sv_root="${WUJI_DATA_DIR:-./data/GRAB_Tracking_PK_WUJI_v1/data}"
 export subj_nm=''
 export object_type_to_latent_feature_fn="../assets/obj_type_to_obj_feat.npy"
 export inst_tag_to_latent_feature_fn='../assets/inst_tag_to_obj_feat.npy'
