@@ -7,8 +7,8 @@
 | 任务设置 | 序列 | Allegro 手 | Wuji 手 |
 |---|---|---|---|
 | **单序列 A** | `ori_grab_s2_cubesmall_inspect_1` | ✅ rew **219** + 视频 | ✅ offset **181.93** + 视频；✅ **no-offset 175.47**（默认）+ 视频 |
-| **单序列 B** | `ori_grab_s2_flute_pass_1` | ✅ rew **43.55** + 视频（flute 难，阈值~100 未达）| 🏃 GPU6 no-offset ep741（真实手型）|
-| **多任务（generalist）** | cubesmall(26)/flute(18)/合并(44) | 🏃 3 个 GPU3/4/5 | 🏃 3 个 GPU1/2/7（cubesmall/flute/合并，real per-subject vtemp）|
+| **单序列 B** | `ori_grab_s2_flute_pass_1` | ✅ rew **43.55** + 视频（flute 难）| ❌ no-offset **-42** + offset **-29** 都失败（flute 对 wuji 太难）|
+| **多任务（generalist）** | cubesmall(26)/flute(18)/合并(44) | 🏃 3 个训练中(best 133/165/160) | 🏃 3 个训练中(best 53/-31/-28，flute 拖累) |
 
 > Wuji reward 还在慢慢调（当前主推 no-offset 版，见下「offset/no-offset」）。Allegro 侧三种任务都已铺开训练。
 
@@ -76,30 +76,38 @@ wuji 参考有两版（区别仅最后一步「指尖外扩 offset」，详见 [
 
 已产出（cubesmall）：`cubesmall_allegro_policy.mp4`、`cubesmall_wuji_policy_offset.mp4`、`cubesmall_{allegro,wuji}_reference_physics.mp4`、`cubesmall_wuji_reference_physics_offset.mp4`。待产出：no-offset wuji 策略、flute、多任务各序列。
 
-## 已完成（单序列，含 policy 视频）
+## 已完成（单序列）
 
-| 任务 | best reward | test | ckpt | 视频 |
+| 任务 | best | test | 视频 | 备注 |
 |---|---|---|---|---|
-| allegro cubesmall | 219 | 216 | `ckpts/s2_cubesmall_inspect_ckpt.pth`(预训) | `cubesmall_allegro_policy.mp4` |
-| allegro flute | 43.55 | 39 | `ckpts/allegro_flute_pass_best.pth` | `flute_allegro_policy.mp4`（弱，flute 难）|
-| wuji cubesmall offset | 181.93 | 176 | `ckpts/wuji_cubesmall_inspect_offset_best.pth` | `cubesmall_wuji_policy_offset.mp4` |
-| wuji cubesmall **no-offset**（默认）| 175.47 | 172 | `ckpts/wuji_cubesmall_inspect_best.pth` | `cubesmall_wuji_policy.mp4`（100% 举起）|
+| allegro cubesmall | 219 | 216 | `cubesmall_allegro_policy.mp4` | ✅ |
+| allegro flute | 43.55 | 39 | `flute_allegro_policy.mp4` | 弱（阈值~100 未达）|
+| wuji cubesmall offset | 181.93 | 176 | `cubesmall_wuji_policy_offset.mp4` | ✅ |
+| wuji cubesmall **no-offset**（默认）| 175.47 | 172 | `cubesmall_wuji_policy.mp4` | ✅ 100% 举起 |
+| wuji flute no-offset | **-42** | -46 | `flute_wuji_policy.mp4` | ❌ 失败（0% 举起）|
+| wuji flute offset | **-29.46** | — | — | ❌ 失败（offset 也没救活）|
 
-## 训练中（2026-06-04，6 个并行）
+ckpt：`ckpts/{s2_cubesmall_inspect_ckpt, allegro_flute_pass_best, wuji_cubesmall_inspect_best(no-offset默认), wuji_cubesmall_inspect_offset_best}.pth`。
+**结论：flute_pass 对 wuji 太难**（细杆 2cm，pass 动作只 43% 帧接触）——no-offset/offset 两版单序列都训不起来（rew 负）。allegro flute 也只 43（阈值未达），flute 本身难。
 
-| GPU | 任务 | 序列数 | 进度 |
-|---|---|---|---|
-| 1 | wuji cubesmall 多任务 | 26 | ep6/10000 |
-| 2 | wuji flute 多任务 | 18 | ep6/10000 |
-| 3 | allegro cubesmall 多任务 | 26 | ep400/10000 |
-| 4 | allegro flute 多任务 | 18 | ep375/10000 |
-| 5 | allegro cubesmall+flute 合并 | 44 | ep394/10000 |
-| 6 | wuji flute 单序列（no-offset，真实手型）| 1 | ep741/1000（rew 早期偏低，flute 难）|
-| 7 | wuji cubesmall+flute 合并 | 44 | ep275/10000 |
+## 训练中（2026-06-04，多任务 6 个并行，~ep2300–3300/10000）
 
-wuji 多任务现有 3 个粒度（cubesmall/flute/合并），和 allegro 对称。
+| wandb name | 任务 | 序列 | epoch | best(mean rew) |
+|---|---|---|---|---|
+| `allegro_cubesmall_multi` | allegro cube | 26 | 3317 | **132.81** |
+| `allegro_flute_multi` | allegro flute | 18 | 3006 | **165.24** |
+| `allegro_combined_multi` | allegro 合并 | 44 | 3208 | **159.88** |
+| `wuji_cubesmall_multi` | wuji cube | 26 | 2678 | 53.38 |
+| `wuji_flute_multi` | wuji flute | 18 | 2330 | -30.76 |
+| `wuji_combined_multi` | wuji 合并 | 44 | 2788 | -28.41 |
+
+- wandb 名已全唯一（`<hand>_<obj>_multi`），不靠 group 区分（API 改名 + 脚本 log_path 中段改 `<hand>_<obj>`）。
+- **观察**：allegro 三个多任务都健康（132–165）；wuji cubesmall 多任务正（53），但 **wuji flute / 合并仍负**（被 flute 难度拖累，和单序列一致）。
+- GPU6 空闲（wuji flute offset 单训完）。
 
 **wuji 多任务数据**：44 条全部重定向（no-offset，**真实 per-subject 手型** vtemp，s1–s10），`wuji_pipeline/batch_retarget_multitask.py` 批量生成；手型来自 GRAB `Subject Shape Templates`（male+female）。
+
+**稳定性教训**（多任务 ckpt 581MB/个）：磁盘满会崩进程 + 写出**损坏 ckpt**（截断）+ 卡死幸存进程 → `save_frequency` 已 200→500；resume 优先用完整的 `best_ep`（损坏的总是正在写的 `last_ep`）；并发 resume 要错开时间戳/SCRIPT_STEM 防 run-dir 撞车。看门狗 `watchdog_trainings.sh` 轮询 epoch 停滞报警。
 
 可视化：`render_videos/` 有 cubesmall/flute 的 policy + reference_physics，及 `reference_samples/`（抽样真实物理参考，物体留地=参考无主动捏合）。渲染器 `wuji_isaacgym_playback.py` 支持 `--hand allegro|wuji`、`--ref`(纯回放,物体粘参考)、默认(读 rollout,真实物理)。
 
