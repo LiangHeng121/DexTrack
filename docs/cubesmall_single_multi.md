@@ -2,152 +2,198 @@
 
 聚焦 `cubesmall` 物体的单序列 + 多任务（generalist）训练：现状、reward 拆解、下一步尝试。
 
-## 1. 现状（2026-06）
+> **⚠️ 重要更正（2026-06-06）**：本文档早期版本基于 `compute_hand_reward_tracking_twostages` 分析，但实际训练 `use_twostage_rew=False`，走的是 **`compute_hand_reward_tracking`（12731 行）**。两者结构不同。以下均已更正为**活跃函数**的真实情况。
 
-### 单序列（都在 `ori_grab_s2_cubesmall_inspect_1`）
-| 本体/变体 | best rew | test | 视频 | 评价 |
+## 1. 现状
+
+### 单序列（`ori_grab_s2_cubesmall_inspect_1`）
+| 本体/变体 | best | test | 视频 | 评价 |
 |---|---|---|---|---|
-| allegro | 219 | 216 | `cubesmall_allegro_policy.mp4` | ✅ 100% 举起 |
+| allegro | 219 | 216 | `cubesmall_allegro_policy.mp4` | ✅ |
 | wuji offset | 181.93 | 176 | `cubesmall_wuji_policy_offset.mp4` | ✅ |
 | wuji no-offset（默认）| 175.47 | 172 | `cubesmall_wuji_policy.mp4` | ✅ 100% 举起 |
 
-### 多任务（26 条 cubesmall 序列，s1–s10）
-| 本体 | best(mean rew) | s2_inspect 单测 | 视频 |
-|---|---|---|---|
-| allegro | 132 | **167** | `all_policies/allegro_cubesmall_multi.mp4` |
-| wuji | 53 | **-42** ⚠️ | `all_policies/wuji_cubesmall_multi.mp4` |
-
-> **wuji 多任务在 s2_inspect 上 -42，但单任务同序列 172** —— generalist 远不如 specialist。
-
-### 26 条参考质量（指尖→立方体中心，cube 半边 2.5cm）
-参考**本身忠实**（指尖都够到立方体，min 0.9–2.9cm）。但**接触帧占比按动作差异大**：
-- `inspect`/`lift`：70–89%（握得久，好跟踪）
-- `pass`/`offhand`：12–33%（要松手/递出，手大半时间离物体，难）
-
-26 条参考回放视频在 `render_videos/cubesmall_refs/`。
-
-## 2. 当前 reward 组成（`goal_cond=False`，实际用的）
-
-代码：`compute_hand_reward_tracking_twostages`（`tasks/allegro_hand_tracking_generalist.py:14242`，`@torch.jit.script`）。
-
-```
-reward = -0.5·delta_value                                # ① 手腕(全局6DOF)偏离"单个抓握帧"姿态
-       - 0.3·(finger_obj_dist + 2·palm_obj_dist)         # ② 指尖/手掌 离物体远 的惩罚
-       + goal_hand_rew   = (握住时) -2·‖物体-目标位姿‖    # ③ 握住时才奖励物体跟踪
-       + bonus           = (握住且很近) 1/(1+10·goal_dist)# ④ 物体到位的大奖励
-       + hand_up         = (物体抬起后) 0.2 / 0.1·a_z     # ⑤ 抬升
-```
-系数：`rew_delta_hand_pose_coef=0.5`、`rew_finger_obj_dist_coef=0.3`、`hand_pose_guidance_glb_trans/rot/fingerpose=0.6/0.1/0.1`。
-
-### 实测拆解（wuji no-offset，跟踪最好的 env，episodic~172）
-| 项 | 每步均值 | 占比/说明 |
+### 多任务（26 条 cubesmall）
+| 本体 | best | s2_inspect 单测 |
 |---|---|---|
-| ④ **bonus（物体到位）** | **+0.94** | **绝对主导**——握住且物体贴合目标 |
-| ⑤ hand_up（抬升）| +0.12 | 抬起>0.1m 帧占 62% |
-| ② finger/palm 离物体惩罚 | -0.15 | finger_dist 均 0.30、palm 均 0.11m |
-| ③ goal_hand（物体跟踪）| -0.006 | goal_dist 均 **3mm**（物体跟得极准），握住 97% 帧 |
-| ① delta_value（手腕姿态）| ~-0.02 | 很小 |
+| allegro | 132 | 167 |
+| wuji | 53 | -42 ⚠️ generalist 远不如 specialist |
 
-**结论：reward 几乎全靠"握住 + 把物体送到目标轨迹 + 抬起"（④+⑤）。手的姿态像不像人，reward 基本不管。**
+### 26 条参考质量
+参考忠实（指尖都够到立方体）。接触帧占比：`inspect`/`lift` 70–89%，`pass`/`offhand` 12–33%（松手动作难）。视频在 `render_videos/cubesmall_refs/`。
 
-## 3. 通俗解释这几个 reward 到底是什么
+## 2. 当前 reward（活跃函数 `compute_hand_reward_tracking`，`goal_cond=False`, `train_free_hand=False`）
 
-- **① delta_value（手腕姿态）**：手腕（全局平移+旋转）和"一个固定抓握姿势"差多少。**注意**：原本还有"手指角度"那一项，但代码里被**丢掉了**（`delta_value = delta_glb_value`，14356 行）——所以**手指弯成什么样完全不罚**。
-- **② finger/palm 离物体惩罚**：5 指指尖、手掌离立方体越远扣越多。逼着手**贴到物体上**（但不管贴的姿势对不对）。
-- **③ goal_hand（物体跟踪）**：**只有当手握住时**，按"立方体离它该在的位置（逐帧人演示的物体轨迹）差多少"给惩罚。差越小越好。
-- **④ bonus（物体到位）**：握住 + 立方体很贴合目标（<5cm）时给的**大正奖励**（最高 ~1）。这是分数主来源。
-- **⑤ hand_up（抬升）**：立方体被抬起来后，鼓励继续上抬/保持高度。
+```
+reward = -0.5·delta_value                          # ① 逐帧 手姿态跟踪（手腕 + 手指，已开启）
+       - 0.3·(finger_dist + 2·palm_dist)           # ② 指尖/手掌 离物体远 的惩罚
+       + goal_hand_rew                             # ③ 握住时 = -2·‖物体-目标位姿‖
+       + bonus                                     # ④ 握住且很近 = 1/(1+10·goal_dist)
+       # + hand_up  ← 在活跃函数里被注释，没有！
+```
+系数：`rew_delta_hand_pose_coef=0.5`、`rew_finger_obj_dist_coef=0.3`、`hand_pose_guidance_glb_trans/rot/fingerpose = 0.6/0.1/0.1`。
 
-一句话：**现在的 reward 是"物体中心"的——把方块抓住、按人的物体轨迹搬运、举起来就给高分；至于手指/手腕摆得像不像人，没有奖励项管。**
+### 实测拆解（wuji no-offset，最佳 env，episodic~175）
+| 项 | 每步均值 | 说明 |
+|---|---|---|
+| ④ **bonus 物体到位** | **+0.941** | **绝对主导** |
+| ① delta_value 逐帧手姿态 | **-0.218** | 手腕+手指，**本来就在跟踪**（占 bonus 约 23%）|
+| ② finger/palm 离物体惩罚 | -0.154 | |
+| ③ goal_hand 物体跟踪 | -0.006 | goal_dist 均 3mm（物体跟得极准）|
+| ⑤ hand_up | **无** | 活跃函数里没有；举起靠 ③④（参考物体轨迹本身上升到 0.4m）|
 
-## 3.5 每项具体怎么算的（通俗 + 公式）
+合计 ≈ +0.56/步 × 300 ≈ 169 ≈ 175。**bonus 主导，但逐帧手姿态跟踪(①)是个实打实的项(-0.218)。**
+
+## 3. 每项具体怎么算的（通俗 + 公式，活跃函数 `compute_hand_reward_tracking`）
 
 先认识几个"输入量"（每帧、每个 env 都有）：
-- `object_pos`：方块**当前**在 sim 里的位置（xyz）。
-- `target_pos`：方块**这一帧该在**的位置 = 人演示的物体轨迹（参考 npy 的 `object_transl[t]`）。
-- `right_hand_pos`：手掌位置；`ff/mf/rf/th_pos`：4 个指尖位置（食/中/无名/拇，由手的关节角 FK 算出）。
-- `hand_pose`：手当前 26 个数（6 全局 + 20 手指角）。
-- `grasping_frame_hand_pose`：参考里"抓握那一刻"的**单帧**手姿态（26 个数，固定不变）。
-- `flag`（是否握住）= `(4指尖到方块距离之和 ≤ 0.12×指数)` **且** `(手掌到方块 ≤ ~0.12m)` 两个条件都满足 → `flag==2`。
+- `object_pos` / `object_handle_pos`：方块**当前**在 sim 里的位置（xyz，从刚体状态读）。
+- `target_pos`：方块**这一帧该在**的位置 = 人演示的物体轨迹（参考 npy 的 `object_transl[t]`，按 `progress_buf` 逐帧取）。
+- `right_hand_pos`：手掌位置；`ff/mf/rf/th_pos`：食/中/无名/拇 4 个指尖位置——都是 `rigid_body_states[:, idx, 0:3]`，**Isaac Gym 直接给的当前世界坐标，不用 FK**。
+- `delta_qpos`：= **当前手 26 维 qpos − 这一帧的参考手 qpos**（`self.delta_qpos = shadow_hand_dof_pos − cur_hand_qpos_ref`，逐帧）。前 6 = 全局（3平移+3旋转），6:26 = 20 个手指角。
+- `flag`（是否握住）= `(4指尖到物体距离之和 ≤ 0.12×num_fingers)` **且** `(手掌到物体 ≤ right_hand_dist_thres)`，两条件都满足 → `flag==2`。
 
-### ① delta_value（手腕姿态偏离）
+### ① delta_value（逐帧手姿态偏离，含手指）
 ```
-diff = hand_pose - grasping_frame_hand_pose      # 当前手 - 抓握帧手 (26维)
-Δpos = |diff[0:3]|求和                            # 全局平移 x,y,z 的绝对差之和
-Δrot = |diff[3:6]|求和                            # 全局旋转 3 维的绝对差之和
-Δfinger = |diff[6:26]|求和                        # 手指 20 角的差 —— 算了但被丢弃!
-delta_value = 0.6·Δpos + 0.1·Δrot                # 手指项没进来
+# delta_qpos 是传进来的逐帧偏差，函数内不再覆盖
+delta_hand_pos_value = ‖delta_qpos[:, 0:3]‖₁     # 全局平移 x,y,z 的绝对差之和
+delta_hand_rot_value = ‖delta_qpos[:, 3:6]‖₁     # 全局旋转 3 维的绝对差之和
+delta_qpos_value     = ‖delta_qpos[:, 6:26]‖₁    # 20 个手指角 每个|当前-参考|相加
+delta_value = 0.6·delta_hand_pos_value + 0.1·delta_hand_rot_value + 0.1·delta_qpos_value
 ① = -0.5 · delta_value
 ```
-**通俗**：手腕的位置和朝向，离"那个抓握姿势"差多少，加权求和再取负。**手指弯成啥样算出来了却没用**（所以不约束手指像不像人）。注意目标是**一个固定帧**，不是逐帧跟人。
+**通俗**：当前手和**这一帧参考手**差多少——手腕位置（权 0.6）、手腕朝向（权 0.1）、20 个手指角（权 0.1）全部算，加权求和再 ×(-0.5)。**逐帧、含手指，和"像不像人"直接相关；本来就开着，只是手指那 0.1 偏小。** 实测约 -0.218/步。
 
 ### ② finger/palm 离物体惩罚
 ```
-palm_dist = ‖object_pos - right_hand_pos‖         # 手掌到方块中心 (超 0.5m 截断)
-finger_dist = Σ_{ff,mf,rf,th} ‖object_pos - 指尖‖  # 4 指尖到方块中心 之和 (超 0.6×指数 截断)
-② = -0.3 · (finger_dist + 2·palm_dist)
+right_hand_dist        = ‖object_pos − right_hand_pos‖      # 手掌到方块中心（≥0.5m 截断到 0.5）
+right_hand_finger_dist = Σ_{食,中,无名,拇} ‖object_pos − 指尖‖  # 4 指尖到方块中心 之和（≥0.6×num_fingers 截断）
+② = -0.3 · (right_hand_finger_dist + 2·right_hand_dist)
 ```
-**通俗**：量 4 个指尖、手掌到方块中心的**直线距离**，加起来（手掌权重翻倍），越远扣越多。逼手**贴到方块上**——但只看"近不近物体"，不看"姿势对不对"。
+**通俗**：量 4 个指尖、手掌到**方块中心的直线距离**，加起来（手掌权重翻倍），越远扣越多 → 逼手**贴到方块上**。只看"近不近物体"，不看姿势对不对。注意 finger_dist **只用了 4 指（漏小指）**，详见 §4.5。实测约 -0.154/步。
 
 ### ③ goal_hand（物体跟踪，只在握住时）
 ```
-goal_dist = ‖target_pos - object_pos‖             # 方块 实际 vs 该在的位置
+goal_dist = ‖target_pos − object_pos‖                       # 方块 实际 vs 这帧该在的位置
 ③ = 握住(flag==2) ? (-2·goal_dist) : 0
 ```
-**通俗**：**只有手握住方块时**，才看"方块离它这一帧该在的位置差多少"，差越大扣越多。没握住 → 这项 0 分。这就是"按人的物体轨迹搬运"的约束。
+**通俗**：**只有手握住方块时**，才看"方块离它这一帧该在的位置差多少"，差越大扣越多；没握住 → 这项 0 分。这就是"按人的物体轨迹搬运"的约束（也包含了把方块抬到 0.4m——因为参考物体轨迹本身就上升）。实测约 -0.006/步（物体跟得极准，goal_dist 均 3mm）。
 
 ### ④ bonus（物体到位，主分来源）
 ```
 ④ = (握住 且 goal_dist ≤ 0.05m) ? 1/(1+10·goal_dist) : 0
 ```
-**通俗**：握住 **且** 方块离目标 5cm 以内时，给一个**大正奖励**——完美贴合时≈1，稍微飘开就快速衰减。实测它贡献 ~+0.94/步，是分数的大头。
+**通俗**：握住 **且** 方块离目标 5cm 以内时，给一个**大正奖励**——完美贴合时≈1，稍微飘开就快速衰减。实测约 +0.94/步，是分数的大头。
 
-### ⑤ hand_up（抬升）
-```
-lowest = object_pos[2]                            # 方块高度
-hand_up = (lowest ≥ 阈值1 且 握住) ? 0.1·a_z : 0   # a_z = 动作里的上抬量
-hand_up = (lowest ≥ 阈值2 且 握住) ? 0.2 : 上一行  # 抬够高直接给 0.2
-```
-**通俗**：方块被抬过阈值1（且握着）就按"上抬动作"给奖励、鼓励继续往上；抬过阈值2直接给固定 +0.2。鼓励**举起来并保持**。
-
-## 3.6 两个关键细节：抓握帧 & hand_up
-
-### 抓握帧（grasping frame）哪来的、准不准
-`grasp_frame_hand_qpos = goal_hand_qs_th[cur_grasp_fr]`，`cur_grasp_fr` 由 `_find_grasp_frame(物体轨迹)` 检测（`tasks/...:4085`）：
-```
-从第0帧往后扫，找第一个"物体开始动"的帧（相邻帧 平移>1cm 或 旋转>0.01rad），返回该帧
-```
-= **"物体第一次移动那一帧"≈ 手抓起它的瞬间**，取参考里**那一帧**的手姿态。
-**问题（不够准）**：
-- 只取**一帧**却约束整段 300 帧——手搬运中经过很多姿态，一直罚"偏离抓握瞬间手腕"不合理。
-- 会误判：开头物体微抖→触发太早；物体几乎不动→返回末尾帧（烂锚点）。
-- **逐帧参考 `ori_cur_hand_qpos_ref` 已传进 reward 但没用于此项**——有逐帧真值却用了单帧近似。
-
-→ ① 是个**弱单帧锚**，不是忠实逐帧手姿态目标，是"手不像人"的原因之一。
-
-### 为什么奖励 hand_up？是否所有动作都抬升
-**不是所有动作都抬。** 阈值：物体过初始高度→按上抬动作 `0.1·a_z` 给奖励；物体过 **0.2m 绝对高度**→给 +0.2（都需握住）。
-- cubesmall 里 `inspect`/`lift` 抬到 ~0.4m（0.2 阈值合适）；但 **`pass`/`offhand` 不一定抬到 0.2m**。
-- hand_up 是**塑形/引导奖励**：抬升要克服重力，光靠"物体跟踪"很难让 RL 自己发现往上抬，硬给一个向上激励帮 bootstrap。
-- **但它不分动作**：对 pass/offhand 这种不抬的序列是**错的激励**，和"物体跟踪"项打架（③ 会部分抵消，但偏置仍在）。
-
-→ **多任务学不好的又一原因**：reward（单帧抓握锚 + 普遍抬升偏置）是给单一 inspect/lift 调的，**对 26 种多样动作不匹配**。
+### ⑤ hand_up —— **活跃函数里没有**（被注释）
+物体能举起来不是靠 hand_up，而是靠 ③④：参考物体轨迹本身上升到 0.4m，策略跟踪它就把方块带上去了。
 
 ## 4. 诊断（回答两个"为什么"）
 
-- **为什么手和人手差别大**：reward **没有逐帧"手姿态跟踪"项**（手指项被丢、手腕项只对单帧、且系数小）。手姿态只靠 kinematics-bias（动作=参考+残差）软约束，策略可自由偏离去找"能搬动物体"的任意抓法。
-- **为什么多任务 cubesmall 学不好**：① reward 是物体中心，26 条各分 ~1500 env（单任务 22000）数据稀；② `pass/offhand` 低接触序列信号差；③ wuji 5 指更难协调，且**没有"模仿人手"的强锚**帮 generalist bootstrap。
+- **为什么手和人手差别大**：reward **有**逐帧手姿态跟踪(①)，但**手指系数只有 0.1**，相对 bonus(+0.94) 太弱，策略没动力把那 ~10°（0.18 rad）手指偏差压更小。→ 不是"没奖励"，是"奖励太弱"。
+- **为什么多任务 cubesmall 学不好**：① 物体中心 reward，26 条各分 ~1500 env 数据稀；② `pass/offhand` 低接触序列信号差；③ wuji 5 指更难协调；④ 见下 #3 的 finger_dist bug 让抓握判定对 wuji 偏松。
 
-## 5. 接下来尝试（按优先级）
+## 4.5 finger_dist 对 wuji 算不对（真 bug）
 
-1. **★ 逐帧"手指+手腕姿态跟踪"**：把被丢的 `手指角度差` 项加回来，且目标从"单个抓握帧"改成**逐帧参考**。给策略强模仿锚——预期最能改善"像人手" + 帮 generalist 收敛。改动小（reward 函数）。
-2. **指尖位置跟踪 vs MANO**：奖励 wuji 5 指尖匹配**逐帧人手指尖位置**（重定向到人手指尖仅 ~9mm，目标可靠）。把手钉在演示上。
-3. **接触一致性奖励**：只在参考"该接触"的帧奖励接触、"该松手"的帧奖励松开——比一刀切的 finger-dist 惩罚更适合 pass/offhand。
-4. **hand_up 改成"跟参考走"**：不要普遍奖励抬到 0.2m，而是奖励"物体高度跟参考物体高度一致"——这样 pass/offhand 不抬的序列就不会被错误地往上推（直接修 3.6 的 hand_up 偏置问题）。
-5. **多任务专属**：先去掉 pass/offhand 低接触序列（或降权）让 generalist 先学好 inspect/lift；或多任务也加 #1 的模仿锚。
+`right_hand_finger_dist` = **拇+食+中+无名 4 个指尖**到物体距离之和（task 6413+ 行直接读 sim 当前指尖）。**第5指 pinky（right_finger5）被注释掉了**（6438 行）。但阈值用 `num_fingers=5`（grip flag 阈值 0.12×5=0.6、clamp 0.6×5=3.0）。
+- 后果：**小指完全没算**；**抓握 flag 阈值(0.6,按5指)对着4指之和比 → 太松，容易误判"已握住"**（从而解锁 bonus）。
+- allegro 4 指、num_fingers=4 一致，没问题；只有 wuji 漏了第5指又用了5的阈值。
+- 修：把第5指加进 finger_dist（或阈值改成实际的4）。
 
-> 其中 #1 同时解决 3.6 的"单帧抓握锚"问题（把目标从单帧 `grasp_frame` 换成逐帧 `ori_cur_hand_qpos_ref`，该逐帧参考已经传进 reward 函数，改动很小）。
+## 5. 接下来尝试（已按更正调整）
 
-**建议先做 #1**（逐帧手姿态跟踪），开一个 cubesmall 单任务对照训练验证"像人手"+reward 是否提升，再推广到多任务。
+1. **★ 调大手指姿态系数** —— ✅ **已实现，开关 `BOOST_FINGERPOSE=1`**（`hand_pose_guidance_fingerpose_coef` 0.1→0.5，可用 `FINGERPOSE_COEF` 调值）。直接强化已有的逐帧手指跟踪（×5），预期让手更像人。详见 §7 实现模块。
+2. **palm/flag 适配长手指**（wuji 手指长、手掌该离物体远点）—— ✅ **已实现，开关 `RELAX_PALM=1`**（放宽抓握手掌阈值 0.12→0.22 + 去掉 palm 惩罚）。详见 [§7 实现模块](#7-实现模块reward-开关-2-relax_palm--3-fix_finger5)。
+3. **修 finger_dist 第5指**（见 4.5）—— ✅ **已实现，开关 `FIX_FINGER5=1`**（finger_dist 补 wuji `pinky`，对齐 5 指阈值）。详见 [§7 实现模块](#7-实现模块reward-开关-2-relax_palm--3-fix_finger5)。
+4. **指尖位置跟踪（任务空间）** —— ✅ **已实现，开关 `FINGER_POS_REW=1`**（+ `FINGER_POS_COEF` 默1.0）：活跃函数加附加项 `-coef·Σ_{5指}‖sim指尖 − 参考指尖‖`。关键不是"换 MANO 目标"，而是**惩罚算在指尖空间而非关节空间**。参考指尖原本 wuji 数据没有（只有 q26）→ 离线 FK 重定向 qpos 生成（见 §7.2/§7.5）。详见 §7 实现模块。
+
+**#1/#2/#3/#4 均已实现并在跑**（见 §7.6）。下一步看四组实验收敛结果对比、择优组合。
+
+## 6. 已知坑（分析层面）
+
+- **改 reward 要改 `compute_hand_reward_tracking`（12716），不是 `_twostages`**（后者 `use_twostage_rew=True` 才用，当前 False 没用到）。我早期把开关加到了 twostages，全部无效 → 一定要按 §7 的方式 grep print 确认改动落在活跃函数。
+- **bonus 主导**：reward 大头是 ④ bonus（物体到位），逐帧手姿态(①)虽在跟踪但系数弱 → "手不像人"是奖励太弱不是没奖励（见 §4）。
+
+---
+
+## 7. 实现模块：reward 开关 (#1 BOOST_FINGERPOSE / #2 RELAX_PALM / #3 FIX_FINGER5 / #4 FINGER_POS_REW)
+
+> 本节自成一块，集中 #1/#2/#3/#4 的全部代码实现、设计、坑与验证。改动**未提交**；默认全关 = 原行为完全不变。四个开关互相独立，可单独或组合开。
+
+### 7.1 开关一览（env 变量门控）
+
+| 开关 | env | 作用 | 默认(关) | 开 |
+|---|---|---|---|---|
+| #1 | `BOOST_FINGERPOSE=1` | 调大逐帧手指姿态跟踪系数（×5，让手更像人） | `fingerpose_coef=0.1` | `0.5`（可用 `FINGERPOSE_COEF` 调值） |
+| #2 | `RELAX_PALM=1` | 放宽抓握 flag 的手掌阈值 + 去掉 palm 距离惩罚 | `palm_grip_thres=0.12, palm_dist_rew_w=2.0` | `0.22, 0.0` |
+| #3 | `FIX_FINGER5=1` | finger_dist 补第5指(wuji `pinky`=right_finger5) | `fix_finger5=False`（仅4指） | 含5指 |
+| #4 | `FINGER_POS_REW=1` | 指尖空间跟踪附加项 `-coef·Σ_{5指}‖sim − 参考指尖‖` | `finger_pos_coef=0`（无此项） | `1.0`（`FINGER_POS_COEF`；需 FPOS 数据）|
+
+### 7.2 改的位置（活跃函数 `compute_hand_reward_tracking` 12716-13070 + task）
+
+- **#1**：__init__ 里 `BOOST_FINGERPOSE=1` 时覆盖 `self.hand_pose_guidance_fingerpose_coef`（0.1→`FINGERPOSE_COEF`，默 0.5）。该系数本就作为参数传进活跃函数（`delta_value = 0.6·glb_trans + 0.1·glb_rot + coef·fingerpose`），**无需改函数签名**。
+- **#2/#3 签名**：活跃函数加 4 个**带默认值**参数 `palm_grip_thres=0.12, palm_dist_rew_w=2.0, fix_finger5=False, right_hand_lf_pos: Optional[Tensor]=None`。
+- **#2**：3 处 `right_hand_dist <= 0.12`（12904/12956/13009）→ `<= palm_grip_thres`；13023 palm 惩罚 `2.0·right_hand_dist` → `palm_dist_rew_w·right_hand_dist`。
+- **#3**：task 指尖提取处（原 `'little'` 注释块）→ `if 'pinky' in hand_body_idx_dict` 取 `self.right_hand_lf_pos` 否则 `None`；活跃函数 finger_dist 计算后、clamp 前加 `if fix_finger5: if lf is not None: finger_dist += ‖obj-lf‖`（5指之和对阈值 0.6×5 一致）。
+- **#4（数据）**：wuji 参考 npy 原本只有 q26，无指尖位置 → 两步离线生成（不覆盖原数据）：① `wuji_pipeline/add_link_pos_to_reference.py`（wuji-retarget 环境）pinocchio FK q26 → palm+finger1..5 世界坐标，存纯数组 npz；② `wuji_pipeline/assemble_fpos_reference.py`（dextrack 环境）合并进原 npy 的 `link_key_to_link_pos`、用 numpy 1.24 重存到 `data/GRAB_Tracking_PK_WUJI_FPOS_v1/`。**坑**：numpy 2.x 存的 dict-pickle npy 在 1.24 加载报 `numpy._core`，故走纯数组 npz 中转。
+- **#4（reward）**：活跃函数加 3 个**带默认值**参数 `finger_pos_rew=False, finger_pos_coef=0.0, ref_fingertip_pos: Optional[Tensor]=None`；在 reward 算完后、return 前加 `if finger_pos_rew: reward += -coef·Σ‖sim指尖−ref‖`（th/ff/mf/rf/lf 对 ref finger1/2/3/4/5）。task 在 compute_reward 里从 `self.tot_key_to_tot_link_pos`（数据有 `link_key_to_link_pos` 时由 4022-4025 自动填充）按 `env_inst_idxes`+逐帧建 `self.ref_fingertip_pos`(N×5×3)，传进 5965 调用点。**用新开关 `finger_pos_rew`，不碰 `w_finger_pos_rew`**（后者会在 5860 转去 rbpos 路径）。启动需 `WUJI_DATA_DIR` 指向 FPOS 目录。
+- **__init__**：统一在一个开关块读 env → `self.boost_fingerpose/relax_palm/fix_finger5/finger_pos_rew/finger_pos_coef/palm_grip_thres/palm_dist_rew_w`，并 `print [REWARD SWITCH] ...`。
+- **调用点**：仅活跃路径 5965 传 `self.*`（#2/#3 的 4 个 + #4 的 3 个新参数；#1 的 coef 走原有 `self.hand_pose_guidance_fingerpose_coef` 参数）。
+
+### 7.3 低风险设计
+
+- **带默认值参数** → 只有 5965 调用点传真值；5718（会条件指向 `_taco`）及其它调用点省略=默认=原行为不变，无需改它们。
+- **按行号精确改**：`_taco`/`_rbpos`/`_twostages`/`_warm` 是近重复函数，`right_hand_dist <= 0.12`、palm 惩罚等字符串全文几十处 → 只能限定 12716-13070 按行号改，禁止全局 replace_all。
+- **TorchScript 细化**：`Optional[Tensor]` 只在直接 `if x is not None:` 时细化，不能 `if a and x is not None:` → 用嵌套 if。
+
+### 7.4 验证（务必做，吸取上次 inert 教训）
+
+`py_compile` ✓ + 最小 JIT 冒烟测试 ✓（torch 2.4.1 支持 None 默认值 + 嵌套细化 + 多参数 print + `int(tensor[0])`）。**启动后 grep 训练日志，两条都出现且值对才算生效**（jit 内 `REWARD_ACTIVE` 已含 `fingerpose_coef=`，可一并确认 #1 提升值真传进活跃函数）：
+1. `[REWARD SWITCH] relax_palm=... palm_grip_thres=... palm_dist_rew_w=... fix_finger5=... boost_fingerpose=... fingerpose_coef=...`（__init__）
+2. `REWARD_ACTIVE compute_hand_reward_tracking palm_grip_thres= ... palm_dist_rew_w= ... fix_finger5= ... fingerpose_coef= ...`（**jit 内部，`progress_buf[0]==1` 触发**）
+   - #1 跑应见 `boost_fingerpose=True fingerpose_coef=0.5`，且 `relax_palm=False ... fix_finger5=False`。
+   - #2+#3 跑应见 `palm_grip_thres=0.22 palm_dist_rew_w=0.0 fix_finger5=True fingerpose_coef=0.1`。
+   - #4 跑还要看 `REWARD_ACTIVE ... finger_pos_rew= True finger_pos_coef= 1.`，**且 task 端 `[FINGER_POS] ref_fingertip_pos=(N, 5, 3) tot_link_keys=[...finger1..5]`**（确认 FPOS 参考指尖真接进 reward，非 None）。已实测：单 (22000,5,3)、多 (40000,5,3)。
+
+### 7.5 启动
+
+```bash
+# --- #1（BOOST_FINGERPOSE）单独跑：单 GPU2 / 多 GPU4 ---
+BOOST_FINGERPOSE=1 SCRIPT_STEM=grab_single_wuji_fp1 \
+  bash scripts/run_tracking_headless_grab_single_wuji.sh 2 ori_grab_s2_cubesmall_inspect_1
+BOOST_FINGERPOSE=1 SCRIPT_STEM=grab_multiple_wuji_fp1 \
+  bash scripts/run_tracking_headless_grab_multiple_wuji.sh 4 '' ../assets/inst_tag_list_obj_cubesmall_fp1.npy
+
+# --- #2+#3（RELAX_PALM+FIX_FINGER5）合并跑：单 GPU6 / 多 GPU7 ---
+RELAX_PALM=1 FIX_FINGER5=1 SCRIPT_STEM=grab_single_wuji_relax23 \
+  bash scripts/run_tracking_headless_grab_single_wuji.sh 6 ori_grab_s2_cubesmall_inspect_1
+RELAX_PALM=1 FIX_FINGER5=1 SCRIPT_STEM=grab_multiple_wuji_relax23 \
+  bash scripts/run_tracking_headless_grab_multiple_wuji.sh 7 '' ../assets/inst_tag_list_obj_cubesmall_relax23.npy
+
+# --- #4（FINGER_POS_REW）单独跑：单 GPU3 / 多 GPU5；需先生成 FPOS 数据 + WUJI_DATA_DIR 指向它 ---
+# 数据：conda activate wuji-retarget && python wuji_pipeline/add_link_pos_to_reference.py
+#       conda activate dextrack      && python wuji_pipeline/assemble_fpos_reference.py
+FPOS=./data/GRAB_Tracking_PK_WUJI_FPOS_v1/data
+FINGER_POS_REW=1 WUJI_DATA_DIR=$FPOS SCRIPT_STEM=grab_single_wuji_fp4 \
+  bash scripts/run_tracking_headless_grab_single_wuji.sh 3 ori_grab_s2_cubesmall_inspect_1
+FINGER_POS_REW=1 WUJI_DATA_DIR=$FPOS SCRIPT_STEM=grab_multiple_wuji_fp4 \
+  bash scripts/run_tracking_headless_grab_multiple_wuji.sh 5 '' ../assets/inst_tag_list_obj_cubesmall_fp4.npy
+```
+> 多任务用改名的 tag 列表副本（`..._fp1.npy` / `..._relax23.npy` / `..._fp4.npy`）得唯一 RUN_MID；wandb 名启动后用 API 重命名为下表。
+
+### 7.6 当前在跑（2026-06-06，wuji no-offset，未提交代码）
+
+| 实验 | log 路径 | wandb 名 |
+|---|---|---|
+| #1 单 | `logs/grab_single_wuji_fp1/ori_grab_s2_cubesmall_inspect_1/20260606_101143` | `wuji_cubesmall_single_1` |
+| #1 多 | `logs/grab_multiple_wuji_fp1/wuji_cubesmall_fp1/20260606_101143` | `wuji_cubesmall_multi_1` |
+| #2+#3 单 | `logs/grab_single_wuji_relax23/ori_grab_s2_cubesmall_inspect_1/20260606_095846` | `wuji_cubesmall_single_2_3` |
+| #2+#3 多 | `logs/grab_multiple_wuji_relax23/wuji_cubesmall_relax23/20260606_095846` | `wuji_cubesmall_multi_2_3` |
+| #4 单 | `logs/grab_single_wuji_fp4/ori_grab_s2_cubesmall_inspect_1/20260606_104821` | `wuji_cubesmall_single_4` |
+| #4 多 | `logs/grab_multiple_wuji_fp4/wuji_cubesmall_fp4/20260606_104821` | `wuji_cubesmall_multi_4` |
+
+> 注：#4 启动抢占了会话前的两个旧 allegro 多任务（cubesmall ep4341 best137 @GPU3、combined ep4194 best161 @GPU5），均可从 `best_ep` resume。
+
+---
 
 相关：[systematic_training_plan.md](systematic_training_plan.md)、[wuji_retargeting_and_visualization.md](wuji_retargeting_and_visualization.md)。

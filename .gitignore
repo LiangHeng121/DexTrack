@@ -110,3 +110,6 @@ patch_scripts_v*.py
 # Local-only large dirs (GRAB dataset / vendored wuji lib)
 GRAB/
 wuji/
+retargeting/
+# generated FK fingertip intermediates (regenerable via wuji_pipeline scripts)
+wuji_pipeline/out/fpos_npz/
