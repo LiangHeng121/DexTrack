@@ -284,7 +284,16 @@ class AllegroHandTrackingGeneralist(BaseTask):
         self.finger_pos_rew = (os.environ.get('FINGER_POS_REW', '0') == '1')
         self.finger_pos_coef = float(os.environ.get('FINGER_POS_COEF', '1.0'))
         self.ref_fingertip_pos = None
-        print(f"[REWARD SWITCH] relax_palm={self.relax_palm} palm_grip_thres={self.palm_grip_thres} palm_dist_rew_w={self.palm_dist_rew_w} fix_finger5={self.fix_finger5} boost_fingerpose={self.boost_fingerpose} fingerpose_coef={self.hand_pose_guidance_fingerpose_coef} finger_pos_rew={self.finger_pos_rew} finger_pos_coef={self.finger_pos_coef}")
+        # #5: task-space PALM position tracking (-coef*||sim_palm - ref_palm||) -> keep palm on the natural reference (anti-hug)
+        self.palm_pos_rew = (os.environ.get('PALM_POS_REW', '0') == '1')
+        self.palm_pos_coef = float(os.environ.get('PALM_POS_COEF', '2.0'))
+        self.ref_palm_pos = None
+        # #5: boost wrist trans/rot tracking coefs (pin the wrist to reference); default keeps original
+        if 'GLB_TRANS_COEF' in os.environ:
+            self.hand_pose_guidance_glb_trans_coef = float(os.environ['GLB_TRANS_COEF'])
+        if 'GLB_ROT_COEF' in os.environ:
+            self.hand_pose_guidance_glb_rot_coef = float(os.environ['GLB_ROT_COEF'])
+        print(f"[REWARD SWITCH] relax_palm={self.relax_palm} palm_grip_thres={self.palm_grip_thres} palm_dist_rew_w={self.palm_dist_rew_w} fix_finger5={self.fix_finger5} boost_fingerpose={self.boost_fingerpose} fingerpose_coef={self.hand_pose_guidance_fingerpose_coef} finger_pos_rew={self.finger_pos_rew} finger_pos_coef={self.finger_pos_coef} palm_pos_rew={self.palm_pos_rew} palm_pos_coef={self.palm_pos_coef} glb_trans_coef={self.hand_pose_guidance_glb_trans_coef} glb_rot_coef={self.hand_pose_guidance_glb_rot_coef}")
         
         
         try:
@@ -5901,18 +5910,18 @@ class AllegroHandTrackingGeneralist(BaseTask):
         
         envs_hand_qtars = batched_index_select(envs_hand_qtars, cur_progress_buf.unsqueeze(-1), dim=1).squeeze(1)
 
-        # #4 finger-pos tracking: per-frame reference fingertip positions (thumb,index,middle,ring,pinky) from FPOS data
-        if self.finger_pos_rew and getattr(self, 'tot_key_to_tot_link_pos', None) is not None and 'right_finger5_tip_link' in self.tot_key_to_tot_link_pos:
-            _ref_tips = []
-            for _k in ['right_finger1_tip_link', 'right_finger2_tip_link', 'right_finger3_tip_link', 'right_finger4_tip_link', 'right_finger5_tip_link']:
-                _lp = batched_index_select(self.tot_key_to_tot_link_pos[_k], self.env_inst_idxes, dim=0)            # nn_envs x nn_frames x 3
-                _lp = batched_index_select(_lp, cur_progress_buf.unsqueeze(-1), dim=1).squeeze(1)                   # nn_envs x 3
-                _ref_tips.append(_lp)
-            self.ref_fingertip_pos = torch.stack(_ref_tips, dim=1)                                                 # nn_envs x 5 x 3
+        # #4/#5 per-frame reference link positions (fingertips + palm) from FPOS data (link_key_to_link_pos)
+        _have_links = (self.finger_pos_rew or self.palm_pos_rew) and getattr(self, 'tot_key_to_tot_link_pos', None) is not None and 'right_palm_link' in self.tot_key_to_tot_link_pos
+        def _ref_link(_k):
+            _lp = batched_index_select(self.tot_key_to_tot_link_pos[_k], self.env_inst_idxes, dim=0)               # nn_envs x nn_frames x 3
+            return batched_index_select(_lp, cur_progress_buf.unsqueeze(-1), dim=1).squeeze(1)                      # nn_envs x 3
+        if _have_links and self.finger_pos_rew and 'right_finger5_tip_link' in self.tot_key_to_tot_link_pos:
+            self.ref_fingertip_pos = torch.stack([_ref_link(f'right_finger{_i}_tip_link') for _i in range(1, 6)], dim=1)  # nn_envs x 5 x 3
         else:
             self.ref_fingertip_pos = None
-        if self.finger_pos_rew and not getattr(self, '_fp_printed', False):
-            print(f"[FINGER_POS] ref_fingertip_pos={None if self.ref_fingertip_pos is None else tuple(self.ref_fingertip_pos.shape)} tot_link_keys={list(self.tot_key_to_tot_link_pos.keys()) if getattr(self,'tot_key_to_tot_link_pos',None) else None}")
+        self.ref_palm_pos = _ref_link('right_palm_link') if (_have_links and self.palm_pos_rew) else None           # nn_envs x 3
+        if (self.finger_pos_rew or self.palm_pos_rew) and not getattr(self, '_fp_printed', False):
+            print(f"[FINGER_POS] ref_fingertip_pos={None if self.ref_fingertip_pos is None else tuple(self.ref_fingertip_pos.shape)} ref_palm_pos={None if self.ref_palm_pos is None else tuple(self.ref_palm_pos.shape)} tot_link_keys={list(self.tot_key_to_tot_link_pos.keys()) if getattr(self,'tot_key_to_tot_link_pos',None) else None}")
             self._fp_printed = True
 
 
@@ -6004,7 +6013,7 @@ class AllegroHandTrackingGeneralist(BaseTask):
             self.right_hand_th_pos, # 
             self.dist_reward_scale, self.rot_reward_scale, self.rot_eps, self.actions, self.action_penalty_scale,
             self.success_tolerance, self.reach_goal_bonus, self.fall_dist, self.fall_penalty,
-            self.max_consecutive_successes, self.av_factor,self.goal_cond, hand_up_threshold_1, hand_up_threshold_2 , len(self.fingertips), self.w_obj_ornt, self.w_obj_vels, self.separate_stages, self.hand_pose_guidance_glb_trans_coef, self.hand_pose_guidance_glb_rot_coef, self.hand_pose_guidance_fingerpose_coef, self.rew_finger_obj_dist_coef, self.rew_delta_hand_pose_coef, self.rew_obj_pose_coef, self.goal_dist_thres, envs_hand_qtars, self.cur_targets, self.use_hand_actions_rew, self.prev_dof_vel, self.cur_dof_vel, self.rew_smoothness_coef, self.early_terminate, self.env_cond_type, self.env_cond_hand_masks, self.train_free_hand,  self.cur_ornt_rew_coef, self.palm_grip_thres, self.palm_dist_rew_w, self.fix_finger5, self.right_hand_lf_pos, self.finger_pos_rew, self.finger_pos_coef, self.ref_fingertip_pos
+            self.max_consecutive_successes, self.av_factor,self.goal_cond, hand_up_threshold_1, hand_up_threshold_2 , len(self.fingertips), self.w_obj_ornt, self.w_obj_vels, self.separate_stages, self.hand_pose_guidance_glb_trans_coef, self.hand_pose_guidance_glb_rot_coef, self.hand_pose_guidance_fingerpose_coef, self.rew_finger_obj_dist_coef, self.rew_delta_hand_pose_coef, self.rew_obj_pose_coef, self.goal_dist_thres, envs_hand_qtars, self.cur_targets, self.use_hand_actions_rew, self.prev_dof_vel, self.cur_dof_vel, self.rew_smoothness_coef, self.early_terminate, self.env_cond_type, self.env_cond_hand_masks, self.train_free_hand,  self.cur_ornt_rew_coef, self.palm_grip_thres, self.palm_dist_rew_w, self.fix_finger5, self.right_hand_lf_pos, self.finger_pos_rew, self.finger_pos_coef, self.ref_fingertip_pos, self.palm_pos_rew, self.palm_pos_coef, self.ref_palm_pos
         )
 
         self.extras['successes'] = self.successes
@@ -12756,7 +12765,7 @@ def compute_hand_reward_tracking(
         dist_reward_scale: float, rot_reward_scale: float, rot_eps: float,
         actions, action_penalty_scale: float,
         success_tolerance: float, reach_goal_bonus: float, fall_dist: float,
-        fall_penalty: float, max_consecutive_successes: int, av_factor: float, goal_cond: bool, hand_up_threshold_1: float, hand_up_threshold_2: float, num_fingers: int, w_obj_ornt: bool, w_obj_vels: bool, separate_stages: bool, hand_pose_guidance_glb_trans_coef: float, hand_pose_guidance_glb_rot_coef: float , hand_pose_guidance_fingerpose_coef: float, rew_finger_obj_dist_coef: float, rew_delta_hand_pose_coef: float, rew_obj_pose_coef: float, goal_dist_thres: float , envs_hand_qtars, env_hand_cur_targets, use_hand_actions_rew: bool, prev_dof_vel, cur_dof_vel, rew_smoothness_coef: float, early_terminate: float, env_cond_type, env_cond_hand_masks, train_free_hand: bool, cur_ornt_rew_coef: float, palm_grip_thres: float = 0.12, palm_dist_rew_w: float = 2.0, fix_finger5: bool = False, right_hand_lf_pos: Optional[torch.Tensor] = None, finger_pos_rew: bool = False, finger_pos_coef: float = 0.0, ref_fingertip_pos: Optional[torch.Tensor] = None
+        fall_penalty: float, max_consecutive_successes: int, av_factor: float, goal_cond: bool, hand_up_threshold_1: float, hand_up_threshold_2: float, num_fingers: int, w_obj_ornt: bool, w_obj_vels: bool, separate_stages: bool, hand_pose_guidance_glb_trans_coef: float, hand_pose_guidance_glb_rot_coef: float , hand_pose_guidance_fingerpose_coef: float, rew_finger_obj_dist_coef: float, rew_delta_hand_pose_coef: float, rew_obj_pose_coef: float, goal_dist_thres: float , envs_hand_qtars, env_hand_cur_targets, use_hand_actions_rew: bool, prev_dof_vel, cur_dof_vel, rew_smoothness_coef: float, early_terminate: float, env_cond_type, env_cond_hand_masks, train_free_hand: bool, cur_ornt_rew_coef: float, palm_grip_thres: float = 0.12, palm_dist_rew_w: float = 2.0, fix_finger5: bool = False, right_hand_lf_pos: Optional[torch.Tensor] = None, finger_pos_rew: bool = False, finger_pos_coef: float = 0.0, ref_fingertip_pos: Optional[torch.Tensor] = None, palm_pos_rew: bool = False, palm_pos_coef: float = 0.0, ref_palm_pos: Optional[torch.Tensor] = None
 ):
     if separate_stages:
         lowest = object_pos[:, 2].unsqueeze(-1).repeat(1, 3)
@@ -13111,8 +13120,12 @@ def compute_hand_reward_tracking(
             if right_hand_lf_pos is not None:
                 finger_pos_value = finger_pos_value + torch.norm(right_hand_lf_pos - ref_fingertip_pos[:, 4], p=2, dim=-1)
             reward = reward + (-finger_pos_coef) * finger_pos_value
+    if palm_pos_rew:
+        if ref_palm_pos is not None:
+            palm_pos_value = torch.norm(right_hand_pos - ref_palm_pos, p=2, dim=-1)
+            reward = reward + (-palm_pos_coef) * palm_pos_value
     if int(progress_buf[0]) == 1:
-        print("REWARD_ACTIVE compute_hand_reward_tracking palm_grip_thres=", palm_grip_thres, " palm_dist_rew_w=", palm_dist_rew_w, " fix_finger5=", fix_finger5, " fingerpose_coef=", hand_pose_guidance_fingerpose_coef, " finger_pos_rew=", finger_pos_rew, " finger_pos_coef=", finger_pos_coef)
+        print("REWARD_ACTIVE compute_hand_reward_tracking palm_grip_thres=", palm_grip_thres, " palm_dist_rew_w=", palm_dist_rew_w, " fix_finger5=", fix_finger5, " fingerpose_coef=", hand_pose_guidance_fingerpose_coef, " finger_pos_rew=", finger_pos_rew, " finger_pos_coef=", finger_pos_coef, " palm_pos_rew=", palm_pos_rew, " palm_pos_coef=", palm_pos_coef, " glb_trans_coef=", hand_pose_guidance_glb_trans_coef, " glb_rot_coef=", hand_pose_guidance_glb_rot_coef)
     return reward, resets, goal_resets, progress_buf, successes, current_successes, cons_successes
 
 @torch.jit.script

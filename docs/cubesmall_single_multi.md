@@ -116,9 +116,9 @@ goal_dist = ‖target_pos − object_pos‖                       # 方块 实�
 
 ---
 
-## 7. 实现模块：reward 开关 (#1 BOOST_FINGERPOSE / #2 RELAX_PALM / #3 FIX_FINGER5 / #4 FINGER_POS_REW)
+## 7. 实现模块：reward 开关 (#1 BOOST_FINGERPOSE / #2 RELAX_PALM / #3 FIX_FINGER5 / #4 FINGER_POS_REW / #5 PALM_POS_REW)
 
-> 本节自成一块，集中 #1/#2/#3/#4 的全部代码实现、设计、坑与验证。改动**未提交**；默认全关 = 原行为完全不变。四个开关互相独立，可单独或组合开。
+> 本节自成一块，集中所有 reward 开关的代码实现、设计、坑与验证。改动**未提交**；默认全关 = 原行为完全不变。开关互相独立，可单独或组合开。
 
 ### 7.1 开关一览（env 变量门控）
 
@@ -128,6 +128,10 @@ goal_dist = ‖target_pos − object_pos‖                       # 方块 实�
 | #2 | `RELAX_PALM=1` | 放宽抓握 flag 的手掌阈值 + 去掉 palm 距离惩罚 | `palm_grip_thres=0.12, palm_dist_rew_w=2.0` | `0.22, 0.0` |
 | #3 | `FIX_FINGER5=1` | finger_dist 补第5指(wuji `pinky`=right_finger5) | `fix_finger5=False`（仅4指） | 含5指 |
 | #4 | `FINGER_POS_REW=1` | 指尖空间跟踪附加项 `-coef·Σ_{5指}‖sim − 参考指尖‖` | `finger_pos_coef=0`（无此项） | `1.0`（`FINGER_POS_COEF`；需 FPOS 数据）|
+| #5 | `PALM_POS_REW=1` | **task空间 palm 位置跟踪** `-coef·‖sim_palm − 参考palm‖`（把 palm 钉在自然位、反贴握） | `palm_pos_coef=0`（无此项） | `PALM_POS_COEF`（代码默认 2.0，**本轮实验用 5.0**；需 FPOS 数据）|
+| #5附 | `GLB_TRANS_COEF` / `GLB_ROT_COEF` | 覆盖手腕平移/旋转跟踪系数（钉手腕） | `0.6 / 0.1` | 任意（**本轮用 2.0 / 0.3**）|
+
+> **为什么 #4/#5 需要 `WUJI_DATA_DIR=FPOS`**：参考指尖/palm 位置来自数据的 `link_key_to_link_pos` 字段，**只有 FPOS 数据(`GRAB_Tracking_PK_WUJI_FPOS_v1`)有**。FPOS = no-offset 原数据 **+** 离线 FK 加的 link 位置；q26/物体轨迹与 no-offset **完全一致(0 差异)**，训练等价，只是多了参考。不指向 FPOS → `ref_palm_pos/ref_fingertip_pos=None` → 该项空操作。
 
 ### 7.2 改的位置（活跃函数 `compute_hand_reward_tracking` 12716-13070 + task）
 
@@ -137,8 +141,9 @@ goal_dist = ‖target_pos − object_pos‖                       # 方块 实�
 - **#3**：task 指尖提取处（原 `'little'` 注释块）→ `if 'pinky' in hand_body_idx_dict` 取 `self.right_hand_lf_pos` 否则 `None`；活跃函数 finger_dist 计算后、clamp 前加 `if fix_finger5: if lf is not None: finger_dist += ‖obj-lf‖`（5指之和对阈值 0.6×5 一致）。
 - **#4（数据）**：wuji 参考 npy 原本只有 q26，无指尖位置 → 两步离线生成（不覆盖原数据）：① `wuji_pipeline/add_link_pos_to_reference.py`（wuji-retarget 环境）pinocchio FK q26 → palm+finger1..5 世界坐标，存纯数组 npz；② `wuji_pipeline/assemble_fpos_reference.py`（dextrack 环境）合并进原 npy 的 `link_key_to_link_pos`、用 numpy 1.24 重存到 `data/GRAB_Tracking_PK_WUJI_FPOS_v1/`。**坑**：numpy 2.x 存的 dict-pickle npy 在 1.24 加载报 `numpy._core`，故走纯数组 npz 中转。
 - **#4（reward）**：活跃函数加 3 个**带默认值**参数 `finger_pos_rew=False, finger_pos_coef=0.0, ref_fingertip_pos: Optional[Tensor]=None`；在 reward 算完后、return 前加 `if finger_pos_rew: reward += -coef·Σ‖sim指尖−ref‖`（th/ff/mf/rf/lf 对 ref finger1/2/3/4/5）。task 在 compute_reward 里从 `self.tot_key_to_tot_link_pos`（数据有 `link_key_to_link_pos` 时由 4022-4025 自动填充）按 `env_inst_idxes`+逐帧建 `self.ref_fingertip_pos`(N×5×3)，传进 5965 调用点。**用新开关 `finger_pos_rew`，不碰 `w_finger_pos_rew`**（后者会在 5860 转去 rbpos 路径）。启动需 `WUJI_DATA_DIR` 指向 FPOS 目录。
-- **__init__**：统一在一个开关块读 env → `self.boost_fingerpose/relax_palm/fix_finger5/finger_pos_rew/finger_pos_coef/palm_grip_thres/palm_dist_rew_w`，并 `print [REWARD SWITCH] ...`。
-- **调用点**：仅活跃路径 5965 传 `self.*`（#2/#3 的 4 个 + #4 的 3 个新参数；#1 的 coef 走原有 `self.hand_pose_guidance_fingerpose_coef` 参数）。
+- **#5（reward）**：活跃函数加 3 个**带默认值**参数 `palm_pos_rew=False, palm_pos_coef=0.0, ref_palm_pos: Optional[Tensor]=None`；reward 算完后加 `if palm_pos_rew: reward += -coef·‖right_hand_pos − ref_palm_pos‖`（right_hand_pos=sim palm=`right_palm_link`）。task 在 compute_reward 里和 #4 共用一个构建块从 `tot_key_to_tot_link_pos['right_palm_link']` 逐帧建 `self.ref_palm_pos`(N×3)。`GLB_TRANS_COEF`/`GLB_ROT_COEF` 在 __init__ 直接覆盖 `self.hand_pose_guidance_glb_trans/rot_coef`（本就是活跃函数参数，无需改签名）。需 `WUJI_DATA_DIR` 指向 FPOS。
+- **__init__**：统一在一个开关块读 env → `self.boost_fingerpose/relax_palm/fix_finger5/finger_pos_rew/palm_pos_rew/palm_pos_coef/...`，并 `print [REWARD SWITCH] ...`。
+- **调用点**：仅活跃路径 5965 传 `self.*`（#2/#3 的 4 个 + #4 的 3 个 + #5 的 3 个新参数；#1/#5附 的 coef 走原有 `glb_trans/rot/fingerpose_coef` 参数）。
 
 ### 7.3 低风险设计
 
@@ -181,18 +186,62 @@ FINGER_POS_REW=1 WUJI_DATA_DIR=$FPOS SCRIPT_STEM=grab_multiple_wuji_fp4 \
 ```
 > 多任务用改名的 tag 列表副本（`..._fp1.npy` / `..._relax23.npy` / `..._fp4.npy`）得唯一 RUN_MID；wandb 名启动后用 API 重命名为下表。
 
-### 7.6 当前在跑（2026-06-06，wuji no-offset，未提交代码）
+### 7.5b #5 启动（palm-lock，2026-06-07）
 
-| 实验 | log 路径 | wandb 名 |
-|---|---|---|
-| #1 单 | `logs/grab_single_wuji_fp1/ori_grab_s2_cubesmall_inspect_1/20260606_101143` | `wuji_cubesmall_single_1` |
-| #1 多 | `logs/grab_multiple_wuji_fp1/wuji_cubesmall_fp1/20260606_101143` | `wuji_cubesmall_multi_1` |
-| #2+#3 单 | `logs/grab_single_wuji_relax23/ori_grab_s2_cubesmall_inspect_1/20260606_095846` | `wuji_cubesmall_single_2_3` |
-| #2+#3 多 | `logs/grab_multiple_wuji_relax23/wuji_cubesmall_relax23/20260606_095846` | `wuji_cubesmall_multi_2_3` |
-| #4 单 | `logs/grab_single_wuji_fp4/ori_grab_s2_cubesmall_inspect_1/20260606_104821` | `wuji_cubesmall_single_4` |
-| #4 多 | `logs/grab_multiple_wuji_fp4/wuji_cubesmall_fp4/20260606_104821` | `wuji_cubesmall_multi_4` |
+```bash
+FPOS=./data/GRAB_Tracking_PK_WUJI_FPOS_v1/data
+# #2+#3 + #5(palm位置 coef5 + 手腕trans/rot 2.0/0.3)，#4不加；单 GPU2 / 多 GPU3
+RELAX_PALM=1 FIX_FINGER5=1 PALM_POS_REW=1 PALM_POS_COEF=5.0 GLB_TRANS_COEF=2.0 GLB_ROT_COEF=0.3 \
+  WUJI_DATA_DIR=$FPOS SCRIPT_STEM=grab_single_wuji_palmlock \
+  bash scripts/run_tracking_headless_grab_single_wuji.sh 2 ori_grab_s2_cubesmall_inspect_1
+RELAX_PALM=1 FIX_FINGER5=1 PALM_POS_REW=1 PALM_POS_COEF=5.0 GLB_TRANS_COEF=2.0 GLB_ROT_COEF=0.3 \
+  WUJI_DATA_DIR=$FPOS SCRIPT_STEM=grab_multiple_wuji_palmlock \
+  bash scripts/run_tracking_headless_grab_multiple_wuji.sh 3 '' ../assets/inst_tag_list_obj_cubesmall_palmlock.npy
+```
 
-> 注：#4 启动抢占了会话前的两个旧 allegro 多任务（cubesmall ep4341 best137 @GPU3、combined ep4194 best161 @GPU5），均可从 `best_ep` resume。
+### 7.6 实验记录（wuji cubesmall，未提交代码）
+
+| 实验 | wandb 名 | log stem | 状态/结果 |
+|---|---|---|---|
+| #1 单 | `wuji_cubesmall_single_1` | `grab_single_wuji_fp1` | 完成 best-54，test(原始)-7 ❌ |
+| #1 多 | `wuji_cubesmall_multi_1` | `grab_multiple_wuji_fp1` | 在跑 |
+| #2+#3 单 | `wuji_cubesmall_single_2_3` | `grab_single_wuji_relax23` | 完成 best48，test(原始)-78、举1/100 ❌ |
+| #2+#3 多 | `wuji_cubesmall_multi_2_3` | `grab_multiple_wuji_relax23` | 在跑 |
+| #4 单 | `wuji_cubesmall_single_4` | `grab_single_wuji_fp4` | 完成 test(原始)**178**、举100% ✅ 最佳(但仍贴握) |
+| #4 多 | `wuji_cubesmall_multi_4` | `grab_multiple_wuji_fp4` | 在跑 |
+| **#5 palm-lock 单** | `wuji_cubesmall_single_palmlock` | `grab_single_wuji_palmlock` | 🏃 2026-06-07 启动(GPU2) |
+| **#5 palm-lock 多** | `wuji_cubesmall_multi_palmlock` | `grab_multiple_wuji_palmlock` | 🏃 启动(GPU3) |
+
+> **横向比要用 test(原始 reward)**：test 脚本不设开关 env → 用原始 reward 评测，三者同尺可比。各开关训练 best 因改了 reward 公式不可直接比。
+> 注：#4 启动抢占了会话前两个旧 allegro 多任务；#5 用 #2+#3 单跑完腾出的 GPU2/3。
+
+---
+
+## 8. 抓握物理调查：为什么"palm 总是贴物体"（2026-06-07，关键结论）
+
+**问题**：wuji 手指长，用户希望 palm 离物体远(自然)、靠长手指夹、策略只微调；但所有能举起来的策略(baseline/#4)都把 palm 贴近物体、手指过弯，和参考差很大。逐层查清如下。
+
+### 8.1 测量与工具
+- **参考 palm 距离**：用 FPOS 数据的 `right_palm_link` FK 位置 vs `object_transl`，**参考 palm 离物体 ~14cm**（抓握期）；而原始抓握 flag 要求 palm ≤ **0.12m=12cm** → **参考姿态本身都不满足原始 flag**，原始 reward 逼策略把 palm 拉到比参考还近。
+- **真物理测试** `isaacgymenvs/reference_physics_test.py`：开重力、物体自由刚体、手按精确参考 qpos PD 驱动。结论：**no-offset 参考抓握完全有效**（物体跟参考 corr=1.00，抬到 41cm 再放下）。注意 `wuji_isaacgym_playback.py` 是**纯运动学**(无重力+物体焊死)，那种"reference"视频不能用来判断物理抓握。
+- **裕度测试**（给参考手指加高斯扰动）：**0.03rad(~2°)手指误差就在抬升中途滑掉，0.08rad(≈RL策略实际精度)完全抓不住**。摩擦 1.5→8 都救不了（几何问题非打滑）。
+
+### 8.2 三个变体的跟踪实测（同 env，qpos 空间）
+| 变体 | 手腕跟踪误差 | 手指 qpos 误差 | 举升 | 解读 |
+|---|---|---|---|---|
+| #4 | 5.0cm | 3.36rad | 100% | 举得起=偏离参考"贴+弯"造裕度 |
+| #2+#3 | 3.2cm | 1.65rad | 1% | 忠实参考=palm 自然但**掉物体** |
+| baseline | 5.9cm | 3.60rad | 100% | 同 #4，靠贴握 |
+
+### 8.3 结论
+1. **"palm 贴"是物理逼出来的功能性补偿**：参考的"指尖轻捏"自然抓握裕度极低(0.03rad)，RL 精度(~0.08rad)够不着 → 策略只能偏离到"贴握+过弯"的厚裕度包络抓握才举得起。**reward 不是根因**。
+2. **便宜的招全失败**：摩擦(几何无效)、offset 参考(指尖外扩→更差，精确都抓不起)、naive 均匀多弯(把精确抓握也搞掉)。
+3. **长手指是结构性原因**：0.08rad 关节误差 × ~15cm 指长 × 4 节 ≈ 指尖偏 1cm+ → 脱离 5cm 小方块。**小方块是长手指最难的情形**。
+4. **(d) 尺寸假设无法验证**：重定向只对 cubesmall 把指尖放到表面；cubemedium 勉强(+0.6cm)、cubelarge 差 7.6cm 完全没合上 → 得不到有效的大物体抓握，无法对比尺寸。
+5. **真正的解需要 grasp synthesis / 更好的重定向**(palm 后 + 手指鲁棒夹持，裕度 > 0.08rad)，但用户认为不可 scale。
+6. **#5 palm-lock(本轮在跑)**：纯训练侧尝试——锁 palm 在自然位 + 加强手腕跟踪 + #2去贴握压力，赌 RL 在"palm 后"约束下找到鲁棒抓握。**预期风险**：掉是手指脆不是 palm 偏，钉 palm 未必救得了举升（可能像 #2+#3 自然但掉）。
+
+相关工具：`reference_physics_test.py`（真物理抓握/裕度测试）、`wuji_pipeline/add_link_pos_to_reference.py`+`assemble_fpos_reference.py`（FPOS 参考 link 位置）。
 
 ---
 
