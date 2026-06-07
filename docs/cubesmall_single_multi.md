@@ -206,14 +206,17 @@ RELAX_PALM=1 FIX_FINGER5=1 PALM_POS_REW=1 PALM_POS_COEF=5.0 GLB_TRANS_COEF=2.0 G
 | #1 | `BOOST_FINGERPOSE=1 FINGERPOSE_COEF=0.5`(×5) | `..._1` / `grab_*_wuji_fp1` | 单 test(原始)**-7** ❌(×5过猛);**多已停**(弃) |
 | #2+#3 | `RELAX_PALM=1 FIX_FINGER5=1` | `..._2_3` / `grab_*_wuji_relax23` | 单 test(原始)**-78**、举 1% ❌(放宽flag→退化);多在跑 best24 |
 | #4 | `FINGER_POS_REW=1 FINGER_POS_COEF=1.0` | `..._4` / `grab_*_wuji_fp4` | 单 test(原始)**178**、举 **100%** ✅(但仍贴握);多在跑 |
-| **#5 palm-lock** | `RELAX_PALM=1 FIX_FINGER5=1 PALM_POS_REW=1 PALM_POS_COEF=5.0 GLB_TRANS_COEF=2.0 GLB_ROT_COEF=0.3` | `..._palmlock` / `grab_*_wuji_palmlock` | **★ ep312 突破**:**90% 持举 + palm 完美在后**(手腕 0.7cm,98%env<1cm)!手指自己找到鲁棒握(~11°/关节,非参考脆捏)。fair@0.22=88。**达成"palm 后 + 举起"**(见 §8.5)|
-| **pinall** | `...PALM_POS_COEF=2.0 GLB 1.0/0.2 FINGER_POS_COEF=1.5 BOOST_FINGERPOSE=1 FINGERPOSE_COEF=0.3` | `..._pinall` | ep200:手指被压到 ~4°/关节(贴参考)但**举 1%** ❌——**钉手指=反方向**(把手指拽回脆参考,拆了鲁棒握)|
-| **pinall2** | `...PALM_POS_COEF=2.0 GLB 1.0/0.2 FINGER_POS_COEF=1.0`（fingerpose 不 boost=0.1）| `..._pinall2` | 🏃 2026-06-07 单 GPU7:松手指惩罚(关节0.1+指尖1.0),找"能举+手指尽量贴参考"的折中点 |
+| **#5 palm-lock** ★赢家 | `RELAX_PALM=1 FIX_FINGER5=1 PALM_POS_REW=1 PALM_POS_COEF=5.0 GLB_TRANS_COEF=2.0 GLB_ROT_COEF=0.3` | `..._palmlock` / `grab_*_wuji_palmlock` | **★ ep464:fair@0.22=147、98% 持举、palm 0.6cm、手指 3.5rad**(从 ep312 的 88/90% 一路爬,还在涨)。**palm 完美在后 + 稳举 + 手指相对最收**——目前 naturalness+举升最优。强 palm 钉 + **不**碰手指=配方 |
+| **pinall**(钉手指) | `...PALM_POS_COEF=2.0 GLB 1.0/0.2 FINGER_POS_COEF=1.5 BOOST_FINGERPOSE=1 FINGERPOSE_COEF=0.3` | `..._pinall` | ep331:手指被压到 ~4°/关节(贴参考)但**举 1-2%** ❌——**钉手指=反方向**(拽回脆参考,拆了鲁棒握) |
+| **pinall2**(松手指) | `...PALM_POS_COEF=2.0 GLB 1.0/0.2 FINGER_POS_COEF=1.0` fingerpose=0.1 | `..._pinall2` | ep92:**99% 持举**(学得快,ep52 就举)、fair 15↑。但 **palm 较前(1.45cm)、手指更飞(5.2rad)** ——松手指**没让手指更贴参考,反而更飞**;palm 弱钉(2.0)也没 palm-lock 后 |
+| **plfp**(强palm+轻#4) | `RELAX_PALM=1 FIX_FINGER5=1 PALM_POS_REW=1 PALM_POS_COEF=5.0 GLB_TRANS_COEF=2.0 GLB_ROT_COEF=0.3 FINGER_POS_REW=1 FINGER_POS_COEF=1.0` fingerpose=0.1 | `..._plfp` | 🏃 2026-06-07 单 GPU5:**palm-lock 的强 palm + pinall2 的轻 #4**,试"palm 很后 + #4 把指尖拉得比 palm-lock 的 3.5 更贴参考 + 还能举" |
 
 > **打分尺度（重要）**：test 默认=原始 reward(flag@0.12)对 palm-back 不公平(见 §8.4);公平加 `PALM_GRIP_THRES=0.22`(独立开关,只放宽阈值)。**最可靠是举升%**——且用**"参考峰值帧仍举着"**(真持举),不要用 `z.max>5cm`(会把碰飞算进去,虚高:palm-lock 98% vs 真持举 90%)。
 > **reward 分解工具**：活跃函数末尾 `REWARD_BREAKDOWN` print(帧 1/150 快照;临时改成每步 gate 可累加成整集绝对值)。实测 palm-lock 尺度整集:bonus +85,负的几乎全在手指(fingerJoint -111、fingerPos -64),palm 几乎不花钱(palmPos -2)。
-> **监控**：`monitor_pinall_trend.sh`(高频/GPU6,每 60s 测 best 的 fairRew/举升%/fingerErr/wristErr → `/tmp/pinall2_trend.log`)。
-> 注:#1/#2+#3 多已停(弃);pinall2 停了 #2+#3 多腾 GPU7。palm-lock 单/多、pinall 单、#4 多、baseline 多都在跑。
+> **监控**：`monitor_pinall_trend.sh`(高频/GPU6,每 60s 测 best 的 fairRew/举升%/fingerErr/wristErr)。
+> **当前结论(2026-06-07)**:**palm-lock(强 palm 钉 5.0 + 不碰手指)是最优**——palm 最后、手指相对最收、98% 稳举。"钉手指"(pinall)反害、"松手指"(pinall2)更飞;palm 弱钉不如强钉。plfp 在试"强palm+轻#4"能否再把手指拉近一点。**"手指≈原轨迹+能举"仍受 §8.5 物理坎制约**。
+> 视频:`render_videos/reward_exps/` —— palm-lock(palm后+稳举)、pinall(自然手但滑掉)、pinall2(举到顶但手指飞+早松)。
+> 注:#1/#2+#3/#4 多已停;各 single + palm-lock多 + baseline多 在跑。
 
 ---
 
