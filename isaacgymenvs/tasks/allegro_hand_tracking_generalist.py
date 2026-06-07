@@ -274,6 +274,8 @@ class AllegroHandTrackingGeneralist(BaseTask):
         self.relax_palm = (os.environ.get('RELAX_PALM', '0') == '1')
         self.fix_finger5 = (os.environ.get('FIX_FINGER5', '0') == '1')
         self.palm_grip_thres = 0.22 if self.relax_palm else 0.12   # #2 grip-flag palm threshold (relax for long fingers)
+        if 'PALM_GRIP_THRES' in os.environ:                        # standalone override (e.g. fair scoring of palm-back policies)
+            self.palm_grip_thres = float(os.environ['PALM_GRIP_THRES'])
         self.palm_dist_rew_w = 0.0 if self.relax_palm else 2.0     # #2 palm-distance penalty weight (0 = removed)
         self.right_hand_lf_pos = None                              # #3 5th fingertip (set each step if hand has 'pinky')
         # #1: boost per-frame finger-pose tracking coef (0.1 -> 0.5) to make the hand look more human
@@ -13111,6 +13113,7 @@ def compute_hand_reward_tracking(
     
     reward = reward + smoothness_rew
     
+    finger_pos_value = torch.zeros_like(reward)
     if finger_pos_rew:
         if ref_fingertip_pos is not None:
             finger_pos_value = torch.norm(right_hand_th_pos - ref_fingertip_pos[:, 0], p=2, dim=-1)
@@ -13120,12 +13123,15 @@ def compute_hand_reward_tracking(
             if right_hand_lf_pos is not None:
                 finger_pos_value = finger_pos_value + torch.norm(right_hand_lf_pos - ref_fingertip_pos[:, 4], p=2, dim=-1)
             reward = reward + (-finger_pos_coef) * finger_pos_value
+    palm_pos_value = torch.zeros_like(reward)
     if palm_pos_rew:
         if ref_palm_pos is not None:
             palm_pos_value = torch.norm(right_hand_pos - ref_palm_pos, p=2, dim=-1)
             reward = reward + (-palm_pos_coef) * palm_pos_value
     if int(progress_buf[0]) == 1:
         print("REWARD_ACTIVE compute_hand_reward_tracking palm_grip_thres=", palm_grip_thres, " palm_dist_rew_w=", palm_dist_rew_w, " fix_finger5=", fix_finger5, " fingerpose_coef=", hand_pose_guidance_fingerpose_coef, " finger_pos_rew=", finger_pos_rew, " finger_pos_coef=", finger_pos_coef, " palm_pos_rew=", palm_pos_rew, " palm_pos_coef=", palm_pos_coef, " glb_trans_coef=", hand_pose_guidance_glb_trans_coef, " glb_rot_coef=", hand_pose_guidance_glb_rot_coef)
+    if int(progress_buf[0]) == 1 or int(progress_buf[0]) == 150:
+        print("REWARD_BREAKDOWN(mean) step=", int(progress_buf[0]), " deltaTOT=", float(((-rew_delta_hand_pose_coef) * delta_value).mean()), " glbTrans=", float(((-rew_delta_hand_pose_coef) * hand_pos_rew_coef * delta_hand_pos_value).mean()), " glbRot=", float(((-rew_delta_hand_pose_coef) * hand_rot_rew_coef * delta_hand_rot_value).mean()), " fingerJoint=", float(((-rew_delta_hand_pose_coef) * hand_qpos_rew_coef * delta_qpos_value).mean()), " fingerObjDist=", float(((-rew_finger_obj_dist_coef) * (right_hand_finger_dist + palm_dist_rew_w * right_hand_dist)).mean()), " goalHand=", float(goal_hand_rew.mean()), " bonus=", float(bonus.mean()), " smoothness=", float(smoothness_rew.mean()), " fingerPos=", float(((-finger_pos_coef) * finger_pos_value).mean()), " palmPos=", float(((-palm_pos_coef) * palm_pos_value).mean()), " TOTAL=", float(reward.mean()))
     return reward, resets, goal_resets, progress_buf, successes, current_successes, cons_successes
 
 @torch.jit.script

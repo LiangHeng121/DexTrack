@@ -199,21 +199,21 @@ RELAX_PALM=1 FIX_FINGER5=1 PALM_POS_REW=1 PALM_POS_COEF=5.0 GLB_TRANS_COEF=2.0 G
   bash scripts/run_tracking_headless_grab_multiple_wuji.sh 3 '' ../assets/inst_tag_list_obj_cubesmall_palmlock.npy
 ```
 
-### 7.6 实验记录（wuji cubesmall，未提交代码）
+### 7.6 实验记录（wuji cubesmall，未提交代码；完整配置 + 结果）
 
-| 实验 | wandb 名 | log stem | 状态/结果 |
+| 实验 | 完整配置（env 开关，均 + `WUJI_DATA_DIR=FPOS` 若含 #4/#5） | wandb / log stem | 结果 |
 |---|---|---|---|
-| #1 单 | `wuji_cubesmall_single_1` | `grab_single_wuji_fp1` | 完成 best-54，test(原始)-7 ❌ |
-| #1 多 | `wuji_cubesmall_multi_1` | `grab_multiple_wuji_fp1` | 在跑 |
-| #2+#3 单 | `wuji_cubesmall_single_2_3` | `grab_single_wuji_relax23` | 完成 best48，test(原始)-78、举1/100 ❌ |
-| #2+#3 多 | `wuji_cubesmall_multi_2_3` | `grab_multiple_wuji_relax23` | 在跑 |
-| #4 单 | `wuji_cubesmall_single_4` | `grab_single_wuji_fp4` | 完成 test(原始)**178**、举100% ✅ 最佳(但仍贴握) |
-| #4 多 | `wuji_cubesmall_multi_4` | `grab_multiple_wuji_fp4` | 在跑 |
-| **#5 palm-lock 单** | `wuji_cubesmall_single_palmlock` | `grab_single_wuji_palmlock` | 🏃 2026-06-07 启动(GPU2) |
-| **#5 palm-lock 多** | `wuji_cubesmall_multi_palmlock` | `grab_multiple_wuji_palmlock` | 🏃 启动(GPU3) |
+| #1 | `BOOST_FINGERPOSE=1 FINGERPOSE_COEF=0.5`(×5) | `..._1` / `grab_*_wuji_fp1` | 单 test(原始)**-7** ❌(×5过猛);**多已停**(弃) |
+| #2+#3 | `RELAX_PALM=1 FIX_FINGER5=1` | `..._2_3` / `grab_*_wuji_relax23` | 单 test(原始)**-78**、举 1% ❌(放宽flag→退化);多在跑 best24 |
+| #4 | `FINGER_POS_REW=1 FINGER_POS_COEF=1.0` | `..._4` / `grab_*_wuji_fp4` | 单 test(原始)**178**、举 **100%** ✅(但仍贴握);多在跑 |
+| **#5 palm-lock** | `RELAX_PALM=1 FIX_FINGER5=1 PALM_POS_REW=1 PALM_POS_COEF=5.0 GLB_TRANS_COEF=2.0 GLB_ROT_COEF=0.3` | `..._palmlock` / `grab_*_wuji_palmlock` | **★ ep312 突破**:**90% 持举 + palm 完美在后**(手腕 0.7cm,98%env<1cm)!手指自己找到鲁棒握(~11°/关节,非参考脆捏)。fair@0.22=88。**达成"palm 后 + 举起"**(见 §8.5)|
+| **pinall** | `...PALM_POS_COEF=2.0 GLB 1.0/0.2 FINGER_POS_COEF=1.5 BOOST_FINGERPOSE=1 FINGERPOSE_COEF=0.3` | `..._pinall` | ep200:手指被压到 ~4°/关节(贴参考)但**举 1%** ❌——**钉手指=反方向**(把手指拽回脆参考,拆了鲁棒握)|
+| **pinall2** | `...PALM_POS_COEF=2.0 GLB 1.0/0.2 FINGER_POS_COEF=1.0`（fingerpose 不 boost=0.1）| `..._pinall2` | 🏃 2026-06-07 单 GPU7:松手指惩罚(关节0.1+指尖1.0),找"能举+手指尽量贴参考"的折中点 |
 
-> **横向比要用 test(原始 reward)**：test 脚本不设开关 env → 用原始 reward 评测，三者同尺可比。各开关训练 best 因改了 reward 公式不可直接比。
-> 注：#4 启动抢占了会话前两个旧 allegro 多任务；#5 用 #2+#3 单跑完腾出的 GPU2/3。
+> **打分尺度（重要）**：test 默认=原始 reward(flag@0.12)对 palm-back 不公平(见 §8.4);公平加 `PALM_GRIP_THRES=0.22`(独立开关,只放宽阈值)。**最可靠是举升%**——且用**"参考峰值帧仍举着"**(真持举),不要用 `z.max>5cm`(会把碰飞算进去,虚高:palm-lock 98% vs 真持举 90%)。
+> **reward 分解工具**：活跃函数末尾 `REWARD_BREAKDOWN` print(帧 1/150 快照;临时改成每步 gate 可累加成整集绝对值)。实测 palm-lock 尺度整集:bonus +85,负的几乎全在手指(fingerJoint -111、fingerPos -64),palm 几乎不花钱(palmPos -2)。
+> **监控**：`monitor_pinall_trend.sh`(高频/GPU6,每 60s 测 best 的 fairRew/举升%/fingerErr/wristErr → `/tmp/pinall2_trend.log`)。
+> 注:#1/#2+#3 多已停(弃);pinall2 停了 #2+#3 多腾 GPU7。palm-lock 单/多、pinall 单、#4 多、baseline 多都在跑。
 
 ---
 
@@ -239,9 +239,34 @@ RELAX_PALM=1 FIX_FINGER5=1 PALM_POS_REW=1 PALM_POS_COEF=5.0 GLB_TRANS_COEF=2.0 G
 3. **长手指是结构性原因**：0.08rad 关节误差 × ~15cm 指长 × 4 节 ≈ 指尖偏 1cm+ → 脱离 5cm 小方块。**小方块是长手指最难的情形**。
 4. **(d) 尺寸假设无法验证**：重定向只对 cubesmall 把指尖放到表面；cubemedium 勉强(+0.6cm)、cubelarge 差 7.6cm 完全没合上 → 得不到有效的大物体抓握，无法对比尺寸。
 5. **真正的解需要 grasp synthesis / 更好的重定向**(palm 后 + 手指鲁棒夹持，裕度 > 0.08rad)，但用户认为不可 scale。
-6. **#5 palm-lock(本轮在跑)**：纯训练侧尝试——锁 palm 在自然位 + 加强手腕跟踪 + #2去贴握压力，赌 RL 在"palm 后"约束下找到鲁棒抓握。**预期风险**：掉是手指脆不是 palm 偏，钉 palm 未必救得了举升（可能像 #2+#3 自然但掉）。
+6. **#5 palm-lock 实测(ep147)**：纯训练侧——锁 palm 在自然位 + 加强手腕跟踪。结果:**手腕跟踪误差钉到 0.3cm**(baseline 贴握 5.9cm)→ **palm 完美在后,达成了"自然 palm"这半边**;但手指误差 2.65rad、**举升仅 1%**(没夹住、掉)。**证明:palm 能钉住,但光钉 palm 举不起,抓握在手指**。→ **pinall**(在 palm-lock 基础上把手指也钉紧:#4 指尖位置 coef1.5 + #1 温和 fingerpose0.3,同时 PALM_POS_COEF 5→2 留夹持余地)。
 
-相关工具：`reference_physics_test.py`（真物理抓握/裕度测试）、`wuji_pipeline/add_link_pos_to_reference.py`+`assemble_fpos_reference.py`（FPOS 参考 link 位置）。
+### 8.4 打分尺度:原始 reward 对 palm-back 不公平
+
+原始 reward 的 bonus(大头,+0.94/步)被"握住 flag"门控,要 **palm ≤ 0.12m**。palm-back 策略(palm ~14cm)即使**接近阶段物体贴着参考**也拿不到 bonus(goal_dist = 物体 vs 逐帧参考物体位置,接近阶段本应小)→ 白扣 ~+几十。实测 palm-lock:原始(flag@0.12)**-89** vs 公平(flag@0.22)**-21**,差的 68 分纯属阈值偏差。**故 palm-back 策略要用 `PALM_GRIP_THRES=0.22` 公平打分(独立开关,只放宽阈值);最可靠仍是举升%**(与开关无关)。
+
+### 8.5 palm-lock 突破 + "手指自然 ↔ 能举"的硬权衡（关键，2026-06-07）
+
+**palm-lock 在 ep312 突然学会举了**(之前 ep147 还 1%):
+- **90% 持举**(参考峰值帧物体仍在 35.7cm,参考 40.8,corr=0.95),**palm 完美在后**(手腕跟踪 0.7cm,98% env <1cm)。
+- **怎么做到的**:**钉 palm + 放开手指** → 手指**自己摸出一个鲁棒握**(误差 ~3.8rad,**不是**参考那个脆的轻捏),palm 保持自然在后。**所以:别约束手指,让它自由去找夹得住的握法。**
+
+**反证(pinall)**:在 palm-lock 上**加手指跟踪**(把手指往参考拽),手指压到 ~1.5rad(贴参考)→ **举 1%**。**钉手指 = 反方向**,拆了那个鲁棒握。
+
+**量化"手指自然 ↔ 能举"是互斥的**(换算到每关节):
+
+| | 手指误差(/关节) | 举升 |
+|---|---|---|
+| pinall(钉手指) | **~4°/关节**(≈参考) | 1% ❌ |
+| palm-lock(放手指) | **~11°/关节** | 90% ✅ |
+
+→ **越贴参考越夹不住**:举起 5cm 小方块,手指物理上**必须**比人手多弯 ~11°/关节去做个更实的握。**"手指≈原轨迹 + 能举"在当前(脆)参考下不可兼得**——要兼得只能把参考抓握做 robust(grasp synthesis)。pinall2 在试中间点(松手指惩罚),但大概率跨不过这道物理坎。
+
+**补充**:
+- **小指**不是最自由的(各指关节误差:拇0.61/食0.89/中0.63/无名0.92/小0.76 rad);小指**看着**自由是因为最长、指尖摆动明显,关节其实居中。`finger_dist` 在 `FIX_FINGER5=1` 时**有**带小指(活跃函数 12790),但 5cm 小方块没小指的位置,拉不过去。
+- **视频对比**:`render_videos/reward_exps/palmlock_ep312_clean_env92.mp4`(palm 后 + 真举到 41cm)vs `pinall_ep181_env92.mp4`(手指更自然但夹起一点就**滑掉、空手举**)——一眼看清权衡。
+
+相关工具：`reference_physics_test.py`（真物理抓握/裕度测试）、`wuji_pipeline/add_link_pos_to_reference.py`+`assemble_fpos_reference.py`（FPOS 参考 link 位置）、`monitor_pinall_trend.sh`（高频测 fair reward+举升+手指误差）。视频在 `render_videos/reward_exps/`。
 
 ---
 
