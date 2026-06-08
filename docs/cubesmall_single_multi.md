@@ -226,7 +226,72 @@ RELAX_PALM=1 FIX_FINGER5=1 PALM_POS_REW=1 PALM_POS_COEF=5.0 GLB_TRANS_COEF=2.0 G
 
 > **★ 重大更正**:**pinall(重钉手指)才是赢家**——手指误差 1.74rad(全场最低、最贴参考)+ palm 在后(0.98cm)+ 98% 稳举 + fair 201(最高)。逐帧:物体跟参考 corr=1.00、手指全程 1.5-1.9rad(palm-lock 是 2.4→5.9 越握越偏)。
 > **§8.3/§8.5 的"手指≈参考 与 能举 不可兼得"结论是错的**——那是基于早期(ep200)pinall 还卡在 1% 时下的。**重手指惩罚收敛慢(ep200 才 1%,但 ep1000 拿到 98%+手指1.74)**,最终逼策略找到了"贴参考又夹得住"的握法。**用户最初"钉手指让它贴参考"的直觉正确,只是需要训满。**
-> 视频:`render_videos/reward_exps/FINAL_pinall_WIN_env77.mp4`(手指贴参考+palm后+稳举)vs `FINAL_palmlock_env79.mp4`(palm后但手指越握越偏)+ `FINAL_plfp/pinall2`。
+> 视频:`render_videos/reward_exps/FINAL_pinall_WIN_env77.mp4`(手指贴参考+palm后+稳举)vs `FINAL_palmlock_env79.mp4`(palm后但手指越握越偏)+ `FINAL_plfp/pinall2/pinall3`(5路全)。
+
+### 8.6 抖动 → 加平滑（2026-06-08）
+
+视频里手特别抖,因为**两个平滑机制默认全关**:
+- **平滑奖励 `rew_smoothness_coef=0`**:活跃函数 12874 行 `smoothness_rew = -coef·‖prev_dof_vel − cur_dof_vel‖`(惩罚加速度突变/急动)。脚本写死 0.000。
+- **动作 EMA `add_hand_targets_smooth=False`**:对 DOF 目标低通 `目标=(1-c)·新+c·上帧`(12337行),默认关。**⚠️ 纠正(2026-06-08):这行低通只在 `if self.not_use_kine_bias:` 分支里(12329),而 wuji 用 `use_kinematics_bias_wdelta=True`(`not_use_kine_bias=False`)→ 该分支不走 → 直接开此 flag 对 wuji 无效**,要用必须先把低通搬/复制到 kinematics-bias 的目标计算处。原"治法②翻开即压抖"不成立。
+- 动作="参考+残差",残差逐帧自由振荡。
+
+> **★ 诊断纠正(2026-06-08):抖动是策略内在残差震荡,不是 test 噪声 ★**
+> 原以为 test 的 `whether_randomize_obs` 噪声让它抖。**实测错**:`whether_randomize_obs` 的噪声注入在 `apply_randomizations()` 里,只在 `if self.randomize:` 调用,而 test `task.randomize=False` → **噪声从不注入**。证据:`NO_RAND_OBS_ACT=1` 关随机化 vs 不关,rollout **md5 完全相同**、reward 都 201.20。这个确定性无噪声 rollout 仍 `|Δqpos|/frame=0.385`、**beyondRef=0.357**(扣掉参考运动后剩的)→ 抖动是**残差本身在震荡**,内在。
+> 诊断开关:`NO_RAND_OBS_ACT=1`(task `__init__` 加,默认关,强制关 obs/act 随机化;test 里其实是空设但保留)。
+
+**🏃 实验:pinall + 训练EMA(2026-06-08,GPU2,cubesmall 单)**:把手指目标 EMA 接进了 kinematics-bias 路径(pre_physics_step ~12540,prev_targets 更新前对 `cur_targets[:,6:]` 低通,gate=`add_hand_targets_smooth`,env 开关 `HAND_EMA_COEF`)。config = 老 pinall(201/98%)+ `HAND_EMA_COEF=0.4`,**不带 jerk**(rew_smoothness=0)。验证:`[HAND_EMA] applied ... on kinematics-bias path` 确实每步执行(不同于 cfg 自带那行只在 not_use_kine_bias 分支)。wandb `wuji_pinall_ema`。
+> **★ 结果(ep1000,test 也带 HAND_EMA_COEF=0.4——策略在带 EMA 动力学下学的,test 必须同口径):EMA 成功,第一个奏效的抗抖方案 ★**
+> | | fair@.22 | 举升% | \|Δqpos\|(抖) | beyondRef | fingerErr |
+> |---|---|---|---|---|---|
+> | pinall_EMA(0.4) | 179.3 | **93%** | **0.277** | **0.252** | 2.14 |
+> | 老 pinall(无平滑) | 201.2 | 98% | 0.385 | 0.357 | 1.74 |
+> | pinall_sm(jerk) | 2.5 | 1% | — | — | — |
+>
+> **抖动 ↓28%**(0.385→0.277)**且抓握保住**(举升 93%,非 jerk 的 1%)。代价温和:fair −11%、举升 −5pt、指误差 1.74→2.14(EMA 滞后让手指略松)。**坐实分析:EMA=滤波非惩罚→不毁抓握**(对比 jerk 罚到参考加速→脱抓)。coef 0.4 可调:更大=更平滑但更滞后/代价更高。视频 `render_videos/smooth_test/pinall_EMA_coef0.4_*.mp4`。
+
+**🏃 无平滑重跑(2026-06-08)**:平滑批次毁了抓握,故 pinall/plfp 的 flute单 + cubesmall多 **去掉 REW_SMOOTH 重跑**(= cubesmall 单能 work 的那版,jerk 关、无 EMA、FPOS)。wandb:`wuji_pinall_flute`(G3)、`wuji_plfp_flute`(G4)、`wuji_pinall_multi`(G5)、`wuji_plfp_multi`(G7)。多任务用 tag 列表副本 `..._pinall.npy`/`..._plfp.npy`。config 已 diff 确认 = sm 版减 REW_SMOOTH(rew_smoothness=0、HAND_EMA=0)。
+> **flute 单结果(~ep850,fair@.22):pinall -34.79 / plfp -39.16,均 0% 举升 → 失败**。手贴参考(wrist 0.2-0.5cm、finger 1.3-1.7)但抓不住 2cm 细杆。**flute 失败与平滑无关,是物体几何难**(和一贯 wuji flute -42 一致,无平滑也没救)。视频 `pinall_flute_env1/3_floor.mp4`/`plfp_flute_env1/3_floor.mp4`(手贴参考、flute 留地;env0 是小弹动离群勿用)。
+>
+> **flute 新方向(2026-06-08):参考举不起来是预期的——kinematics-bias 下 RL 靠残差修;flute 0% = RL 没学出"夹住细杆"的残差。挡着残差的是:#4/#5 把手钉在(不夹的)参考上 + palm-back 把掌推远。** 两个尝试:
+> - **`wuji_pinall3_flute`**(G2):pinall3 轻钉(relax_palm + finger/palm 各 1.0)——比 pinall 的 1.5/2.0 松,但仍钉。
+> - **`wuji_flute_loose`**(G6):**放手让残差去夹**——去 relax_palm(palm 须到 0.12 贴杆)+ **关 #4/#5**(手指自由)+ **接触奖励 RFOD=0.6**(默 0.3,驱动手指碰杆帮探索)。直觉:cubesmall 要"钉紧",flute 要"松开+驱动接触",需求相反。
+> - 新增 env 开关 `RFOD`(单序列脚本 120 行 `rew_finger_obj_dist_coef="${RFOD:-0.3}"`)。
+> - **结果(ep1000,fair@.22):pinall3_flute -41.59/0%、flute_loose -293.47/0%(手腕飞 13.36cm)→ 两个都失败,松开版更糟。** 去掉 #4/#5 位置锚后手不去夹杆而是到处飘(13cm 误差);位置跟踪至少把手拴在物体附近。**flute 确认死路**:pinall/plfp/pinall3/loose 四配置全 0%,根因是 **wuji 长手指 × 2cm 细杆几何不匹配**,reward shaping 救不了。视频 `pinall3_flute_env1.mp4`/`flute_loose_env1.mp4`。
+> cubesmall 多任务 ep350/10000 太早,待 ep600+ 再测。
+> **★ cubesmall 多任务中途测(ep368,在 cubesmall_inspect_1 轨迹评估 generalist):plfp_multi fair+14.37/举升96% ✅,pinall_multi fair-85.80/举升0% ❌——和单序列排名反转 ★** 单序列 pinall(重#4 1.5)最优,但多任务上 **plfp(强palm5.0+轻#4 1.0)收敛/泛化快得多**;pinall 重#4 钉手指在 26 条轨迹上约束过多、收敛慢。pinall_multi 尚早或可追上。视频 `plfp_multi_ep368_env50.mp4`(举起)/`pinall_multi_ep368_env1.mp4`(floor)。
+> **多轨迹 sweep(ep368,plfp vs pinall,举升%)**:s2_inspect 96/0、s1_lift 19/0、s5_pass 2/0、s8_offhand 0/0 → plfp 全面 > pinall,但 plfp 也只先学会 inspect 类(早期不均匀)。
+> **★ 三方消融(2026-06-08):加跑 `wuji_pinall3_multi`(G4,pinall3=轻#4 1.0+弱palm 1.0)拆解 plfp 为何行 ★** pinall_multi(重#4 1.5)0% / plfp_multi(轻#4+强palm5.0)96% / pinall3_multi(轻#4+弱palm)待训。pinall_multi 未停(用户要它跑完);pinall3_multi 用 plfp_flute 跑完腾出的 G4。tag 列表副本 `..._pinall3.npy`。
+> **★ 消融结论(ep490,inspect_1 举升%):pinall_multi(重#4 1.5)0% / pinall3_multi(轻#4 1.0+弱palm1.0)93% / plfp_multi(轻#4+强palm5.0)96% → 关键是"轻 #4",palm 强弱次要 ★** 重 #4 把手指钉在不夹物体的参考位置、在多样轨迹上罚死夹取所需的大残差→0%;轻 #4(≤1.0)松开手指→残差能去夹→93-96%。**正好解释单→多排名反转**:重#4 单序列能 work(残差小贴紧好),摊到多任务就拖死。**实操:多任务用轻#4(plfp/pinall3),别用 pinall 重#4。** s1_lift 两者 ep490 仍 0%(早期没学会该轨迹,inspect 类先成)。视频 `pinall3_multi_ep490_env*.mp4`。
+> **全任务 sweep(26 轨迹,mid-training:plfp ep903/pinall3 ep506/pinall ep891,fair@.22 + 举升%)**:plfp 均fair0.4/均举升17.8%/举起5/26;pinall3 -4.9/12.7%/3/26;pinall -53.0/8.9%/2/26。**plfp>pinall3>pinall 一致**。逐轨迹:三者都会 s2_inspect(99/93/94)、s10_pass(99/99/96);plfp/pinall3 会而 pinall 不会 s7_pass(96/97/0);只 plfp 会 s2_pass/s9_inspect。**大多数轨迹(几乎全部 lift/offhand 动作)三者仍 0%** → generalist 一簇一簇学、远未收敛,这是"reward 抬升慢"的真相(26 条只学会少数)。reward 曲线图 `render_videos/multi_reward_curves.png`、vs baseline `multi_vs_baseline.png`(同期 plfp≈baseline,baseline 训到 ep8090 峰值~66;pinall 重#4 明显垫底)。脚本 `fulltask_test.sh`。
+
+**治法**:抗抖动需训练侧手段,但**别用 jerk-on-dof_vel**(§8.6 已证毁抓握——它连参考的抓-举加速一起罚)。只约束残差的方向(均需先确认在 kinematics-bias 路径上生效,见上 EMA 的坑):① **action-rate penalty** `‖residualₜ−residualₜ₋₁‖`(最对症,需加项);② **训练期 EMA** `add_hand_targets_smooth`(机制最干净=不罚只滤,但**代码只在 `not_use_kine_bias` 分支,wuji 路径要先把低通搬过去**——非零代码);③ 调大 **action-L2** `actionPenaltyScale`(现 -0.0002 → 更大,残差更小,需先验证它在活跃路径上确实生效)。`add_torque/work/global_motion_penalty` 同理需防过罚抓握。
+
+**`rew_smoothness_coef` 脚本里写死 0.000 且前面多处覆盖** → 单序列脚本 440 行已改成 `${REW_SMOOTH:-0.000}`(独立变量名,避开前面的硬覆盖),用 `REW_SMOOTH=0.002` 传入。
+
+**当前 jerk**:无平滑的 pinall `||Δdof_vel||`≈10.4/步 → 加 0.002 平滑惩罚 ≈ -6.3/集,**仅占 reward(~200)的 3%**,温和、主要压抖不动主行为(策略会把 jerk 压下去赚回这 6 分)。
+
+**平滑批次(🏃 2026-06-08,均 REW_SMOOTH=0.002 + FPOS)**:
+| 实验 | 配置 | 任务 | GPU | wandb |
+|---|---|---|---|---|
+| pinall_sm | pinall 全套 | cubesmall 单 | 2 | `wuji_pinall_sm` |
+| pinallsm_flute | pinall 全套 | **flute 单** | 3 | `wuji_pinallsm_flute` |
+| plfpsm_flute | plfp 全套 | **flute 单** | 4 | `wuji_plfpsm_flute` |
+| pinallsm_multi | pinall 全套 | **cubesmall 多** | 5 | `wuji_pinallsm_multi` |
+| plfpsm_multi | plfp 全套 | **cubesmall 多** | 7 | `wuji_plfpsm_multi` |
+
+> 脚本平滑覆盖:单序列脚本 440 行、多任务脚本 610 行均改 `${REW_SMOOTH:-0.000}`(独立变量避开前面硬覆盖)。flute 难(2cm 细杆,wuji 此前 -42 失败),这批看新配置 + 平滑能否改善。
+
+> **★ 结果:平滑(REW_SMOOTH=0.002)把抓握搞坏了(2026-06-08,3 个单序列 ep1000 测完)★**
+> | exp | fair@.22 | 真持举% | fingerRad | per-finger | 备注 |
+> |---|---|---|---|---|---|
+> | pinall_sm (cube) | **2.51** | **1%** | 1.07 | 0.1/0.1/0.2/0.2/0.3 | 手紧贴参考但物体留地 |
+> | pinallsm_flute | -30.25 | 0% | 1.06 | — | flute 仍失败 |
+> | plfpsm_flute | -36.41 | 0% | 1.47 | — | flute 仍失败 |
+>
+> **对照(同测试设置,无平滑老 pinall):fair=201.20、持举 98%、物体升 0.378≈参考** → 证明不是测试问题。唯一差异 `REW_SMOOTH=0.002`。
+> **机理**:rollout 里物体**每帧升幅≈0.000**(参考升到 0.38),手指误差却很小(贴参考)→ 手平滑跟随参考运动学在空中做举的动作,但**没建立抓握/物体留地**。jerk 惩罚(哪怕 0.002)阻止了脆弱抓握所需的快速捏合(呼应 §8.5 抓握脆弱+§8 长手指放大关节误差)。之前"0.002 温和占 3% 不伤主行为"的估计**错误**。
+> 视频:`render_videos/smooth_test/`(pinall_sm_smooth_FAIL vs pinall_NOsmooth_OK 并排)。
+> **结论**:**REW_SMOOTH 这条路在此任务上是死路**(至少 0.002 级别)。抗抖动改走 EMA 动作滤波(`add_hand_targets_smooth`,test 期低通、不改训练 reward),或干脆接受抖动(老 pinall 201/98% 可用)。pinallsm_multi/plfpsm_multi 多任务带同样平滑→大概率同样坏,建议停。
 
 > **打分尺度（重要）**：test 默认=原始 reward(flag@0.12)对 palm-back 不公平(见 §8.4);公平加 `PALM_GRIP_THRES=0.22`(独立开关,只放宽阈值)。**最可靠是举升%**——且用**"参考峰值帧仍举着"**(真持举),不要用 `z.max>5cm`(会把碰飞算进去,虚高:palm-lock 98% vs 真持举 90%)。
 > **reward 分解工具**：活跃函数末尾 `REWARD_BREAKDOWN` print(帧 1/150 快照;临时改成每步 gate 可累加成整集绝对值)。实测 palm-lock 尺度整集:bonus +85,负的几乎全在手指(fingerJoint -111、fingerPos -64),palm 几乎不花钱(palmPos -2)。
@@ -234,6 +299,19 @@ RELAX_PALM=1 FIX_FINGER5=1 PALM_POS_REW=1 PALM_POS_COEF=5.0 GLB_TRANS_COEF=2.0 G
 > **当前结论(2026-06-07)**:**palm-lock(强 palm 钉 5.0 + 不碰手指)是最优**——palm 最后、手指相对最收、98% 稳举。"钉手指"(pinall)反害、"松手指"(pinall2)更飞;palm 弱钉不如强钉。plfp 在试"强palm+轻#4"能否再把手指拉近一点。**"手指≈原轨迹+能举"仍受 §8.5 物理坎制约**。
 > 视频:`render_videos/reward_exps/` —— palm-lock(palm后+稳举)、pinall(自然手但滑掉)、pinall2(举到顶但手指飞+早松)。
 > 注:#1/#2+#3/#4 多已停;各 single + palm-lock多 + baseline多 在跑。
+
+### 8.7 wandb 里加"原始/公平 reward"监控（2026-06-08）
+
+各 reward-switch 配置的训练 reward 不可比(开关不同 → 量纲不同)。于是在**训练进程里每步多算一次"公平 reward"**作为配置无关的任务指标,直接进 wandb 曲线。
+
+- **口径(永远固定)**:`flag@0.22` + 原始系数(`glb_trans=0.6/glb_rot=0.1/fingerpose=0.1`)+ palm 惩罚 `2.0` + 4 指 + **无** #4/#5 位置项 + **smoothness=0**(这样平滑/非平滑 run 也可比)。= §8.4 公平打分、= 测试脚本 `PALM_GRIP_THRES=0.22` 那套。
+- **实现**:`allegro_hand_tracking_generalist.py` 活跃 reward 调用点(~6007)后,用同状态、上述固定参数**再调一次** `compute_reward_func`,只取 `[0]`(jit 函数无副作用,丢弃的 reset/successes 无影响);按 episode 累加 → `self.reward_fair_mean`(对标测试的 episodic 180-201)。`a2c_supervised.py` 日志块(~3731)加 `add_scalar('reward_fair/{step,iter,time}', ...)`。
+- **开关**:`LOG_FAIR_REWARD`(默认 1;设 0 完全去掉这次多算)。`early_terminate=False` → episode 定长,fair 累加与测试同口径。
+- **注意**:wandb 这条是**训练中随机策略**上算的(带探索噪声),会系统性**低于**doc 表里的最优-ckpt eval(180-201),随收敛靠近——看趋势/相对高低,绝对值仍以 eval 为准。
+- **开销**:每步多一次 jit reward(纯张量),实测单序列 fps total 仍 ~82-85k,**无可见变慢**。
+- **验证**:`[REWARD SWITCH] ... log_fair_reward=True` ✓;TB 标量 `reward_fair/iter` 已写(epoch2 = -93.6,vs 训练 reward -359 → 确实剥掉了 #4/#5 惩罚)✓。
+- **代价**:5 个平滑 run(§8.6 表)为加此监控**于 ep~120 重启**(从头跑,丢 ~1h);现已带新代码重新在 GPU 2/3/4/5/7 上跑。
+- **坑(已修)**:第一次重启**漏传 `WUJI_DATA_DIR=$FPOS`**(从 `/proc/environ` 扒配置时只 grep 了 reward 开关名,漏了数据目录)→ 默认回退到非-FPOS 的 `WUJI_v1` → `ref_*=None` → **#4/#5 静默变空操作**,reward 结构变样、wandb 曲线与原 run 完全对不上。**教训**:重启 wuji #4/#5 的 run 必须带 `WUJI_DATA_DIR=$FPOS`;验证用 `[FINGER_POS]` print(在 run 目录 `screen.log`,显示 `ref_fingertip_pos=(N,5,3) ref_palm_pos=(N,3)` 才算生效,`=None` 即漏了)。已带 FPOS 重启修正。
 
 ---
 
@@ -287,6 +365,19 @@ RELAX_PALM=1 FIX_FINGER5=1 PALM_POS_REW=1 PALM_POS_COEF=5.0 GLB_TRANS_COEF=2.0 G
 - **视频对比**:`render_videos/reward_exps/palmlock_ep312_clean_env92.mp4`(palm 后 + 真举到 41cm)vs `pinall_ep181_env92.mp4`(手指更自然但夹起一点就**滑掉、空手举**)——一眼看清权衡。
 
 相关工具：`reference_physics_test.py`（真物理抓握/裕度测试）、`wuji_pipeline/add_link_pos_to_reference.py`+`assemble_fpos_reference.py`（FPOS 参考 link 位置）、`monitor_pinall_trend.sh`（高频测 fair reward+举升+手指误差）。视频在 `render_videos/reward_exps/`。
+
+### 8.8 反关节 / dof 限位 clip（师兄建议改进#1，2026-06-08）
+
+**调查**:wuji URDF(`wuji_hand_description/urdf/wuji_hand_right_fly.urdf`)手指限位 —— joint1≈[-0.16,1.6]、**joint2=±0.37(侧摆 abduction)**、**joint3/joint4 lower≈-0.46~-0.48(-27°,远端指节反掰空间)**。任务在 4926 行直接用 URDF 限位做 **target 钳位**(4812-4815 有注释掉的"i>5→append(0.0)"clip hack,前人想过没启用)。
+
+**关键发现(用 Isaac Gym 实测 dof 顺序+限位、再统计 26 轨迹参考 + rollout):**
+- dof 顺序 = 6 全局 + finger1..5×joint1..4(idx6-25),sim 限位 = URDF;
+- **参考本身就用满 URDF 范围**(joint2 到 ±0.37、joint3/4 多条轨迹 refMIN 顶到 -0.47)→ **不能 clip 到 0**(会夹坏参考);
+- **策略冲出 URDF 硬界**:rollout polMIN 到 -1~-2.5(限位 -0.47),但**核实是瞬态尖峰**(joint3/4 不在 >0.5%帧的持续超界名单);**唯一持续超界是 joint2**(侧摆,20-78%帧坐在界外 0.01-0.03rad)。→ 反关节实情=**偶发瞬态弹动(像抽搐)+ joint2 轻微过张**,非手一直反掰。target 钳位管不到(是接触力把软限位顶穿)。
+
+**改进 = 硬化 URDF 限位(不是设0)**:独立开关 `CLIP_DOF`(默认关)。`compute_observations` 刷新后把 hand dof_pos 钳到 `[lower,upper]`、钳处速度归零、`set_dof_state_tensor_indexed` 写回 sim。验证 `[CLIP_DOF] clip_dof_limits=True` + `active: clamped N violations`(每步在跑;set_dof_state 每步写回未写崩训练)。
+
+**实验**:`wuji_pinall3_clip`(G2,pinall3+CLIP_DOF,cubesmall 单)vs **已有 pinall3**(179.63/99%)。看点:clip 是否**不掉举升**的前提下让手更干净(rollout 全程不超界 + 渲染无反关节弹动 + 顺带压抖)。测时硬验:对照无clip rollout 冲到 -2.5,clip 版应全程 ≤ URDF 界。
 
 ---
 

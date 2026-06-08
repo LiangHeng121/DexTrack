@@ -3730,6 +3730,14 @@ class A2CSupervisedAgent(a2c_continuous.A2CAgent):
                     self.writer.add_scalar('episode_lengths/iter', mean_lengths, epoch_num)
                     self.writer.add_scalar('episode_lengths/time', mean_lengths, total_time)
 
+                    # comparable config-independent task reward (env-side: ALWAYS flag@0.22, original
+                    # coefs, no switches/smoothness). Lets all reward-switch configs be compared on wandb.
+                    _rf = getattr(self.vec_env.env, 'reward_fair_mean', None)
+                    if _rf is not None:
+                        self.writer.add_scalar('reward_fair/step', _rf, frame)
+                        self.writer.add_scalar('reward_fair/iter', _rf, epoch_num)
+                        self.writer.add_scalar('reward_fair/time', _rf, total_time)
+
                     if self.has_self_play_config:
                         self.self_play_manager.update(self)
 

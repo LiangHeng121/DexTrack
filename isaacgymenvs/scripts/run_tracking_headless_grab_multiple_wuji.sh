@@ -607,7 +607,7 @@ export checkpoint=''
 export only_training_on_succ_samples=False 
 export customize_damping=True
 export customize_global_damping=False
-export rew_smoothness_coef=0.000
+export rew_smoothness_coef="${REW_SMOOTH:-0.000}"   # env-overridable via REW_SMOOTH (anti-jitter)
 
 
 export strict_maxx_nn_ts=300

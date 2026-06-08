@@ -117,7 +117,7 @@ export rew_finger_obj_dist_coef=0.5
 export rew_delta_hand_pose_coef=0.5
 
 
-export rew_finger_obj_dist_coef=0.3
+export rew_finger_obj_dist_coef="${RFOD:-0.3}"   # env-overridable contact-drive coef (flute loose-grip exp)
 export rew_delta_hand_pose_coef=0.5
 export separate_stages=False
 
@@ -437,7 +437,7 @@ export checkpoint=''
 export only_training_on_succ_samples=False 
 export customize_damping=True
 export customize_global_damping=False
-export rew_smoothness_coef=0.000
+export rew_smoothness_coef="${REW_SMOOTH:-0.000}"   # env-overridable via REW_SMOOTH (anti-jitter; avoids earlier hardcoded 0.000)
 
 
 export strict_maxx_nn_ts=300

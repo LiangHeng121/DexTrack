@@ -295,7 +295,17 @@ class AllegroHandTrackingGeneralist(BaseTask):
             self.hand_pose_guidance_glb_trans_coef = float(os.environ['GLB_TRANS_COEF'])
         if 'GLB_ROT_COEF' in os.environ:
             self.hand_pose_guidance_glb_rot_coef = float(os.environ['GLB_ROT_COEF'])
-        print(f"[REWARD SWITCH] relax_palm={self.relax_palm} palm_grip_thres={self.palm_grip_thres} palm_dist_rew_w={self.palm_dist_rew_w} fix_finger5={self.fix_finger5} boost_fingerpose={self.boost_fingerpose} fingerpose_coef={self.hand_pose_guidance_fingerpose_coef} finger_pos_rew={self.finger_pos_rew} finger_pos_coef={self.finger_pos_coef} palm_pos_rew={self.palm_pos_rew} palm_pos_coef={self.palm_pos_coef} glb_trans_coef={self.hand_pose_guidance_glb_trans_coef} glb_rot_coef={self.hand_pose_guidance_glb_rot_coef}")
+        # wandb: compute a config-independent comparable task reward (flag@0.22, original coefs, no
+        # switches/smoothness) each step for monitoring. Default ON; set LOG_FAIR_REWARD=0 to disable
+        # (e.g. to remove the extra per-step reward call entirely).
+        self.log_fair_reward = (os.environ.get('LOG_FAIR_REWARD', '1') == '1')
+        # CLIP_DOF: hard-enforce the URDF joint limits on the ACTUAL hand dof state each step
+        # (target is already clamped to URDF, but contact forces push the joint past the soft limit
+        # -> reverse-joint / over-penetration). Clamps dof_pos to [lower,upper] + zeros vel at clamp
+        # + writes back to sim. Default off; independent switch for the anti reverse-joint experiment.
+        self.clip_dof_limits = (os.environ.get('CLIP_DOF', '0') == '1')
+        print(f"[CLIP_DOF] clip_dof_limits={self.clip_dof_limits}")
+        print(f"[REWARD SWITCH] relax_palm={self.relax_palm} palm_grip_thres={self.palm_grip_thres} palm_dist_rew_w={self.palm_dist_rew_w} fix_finger5={self.fix_finger5} boost_fingerpose={self.boost_fingerpose} fingerpose_coef={self.hand_pose_guidance_fingerpose_coef} finger_pos_rew={self.finger_pos_rew} finger_pos_coef={self.finger_pos_coef} palm_pos_rew={self.palm_pos_rew} palm_pos_coef={self.palm_pos_coef} glb_trans_coef={self.hand_pose_guidance_glb_trans_coef} glb_rot_coef={self.hand_pose_guidance_glb_rot_coef} log_fair_reward={self.log_fair_reward}")
         
         
         try:
@@ -583,7 +593,14 @@ class AllegroHandTrackingGeneralist(BaseTask):
         self.action_specific_randomizations = self.cfg['env'].get('action_specific_randomizations', False)
         self.action_specific_rand_noise_scale = self.cfg['env'].get('action_specific_rand_noise_scale', 0.5)
         self.obs_rand_noise_scale = self.cfg['env'].get('obs_rand_noise_scale', 100) # if we use the rand noise = 100 v.s. use less randomized noise? #
-        
+        # diagnostic: NO_RAND_OBS_ACT=1 force-disables test-time obs/act randomization (to see the
+        # policy's true smoothness without injected noise); default keeps cfg behavior.
+        if os.environ.get('NO_RAND_OBS_ACT') == '1':
+            self.whether_randomize_obs_act = False
+            self.whether_randomize_obs = False
+            self.whether_randomize_act = False
+            print(f"[NO_RAND] obs/act randomization DISABLED (whether_randomize_obs_act=False)")
+
         # reset_obj_mass: False
         # obj_mass_reset: 0.27
         # recompute_inertia: False
@@ -662,6 +679,13 @@ class AllegroHandTrackingGeneralist(BaseTask):
         # add_hand_targets_smooth, hand_targets_smooth_coef
         self.add_hand_targets_smooth = self.cfg['env'].get('add_hand_targets_smooth', False)
         self.hand_targets_smooth_coef = self.cfg['env'].get('hand_targets_smooth_coef', 0.4)
+        # env override to enable training-time FINGER-target EMA on the kinematics-bias path
+        # (anti-jitter experiment; the cfg flag's own code only runs in the not_use_kine_bias branch).
+        # HAND_EMA_COEF=<c> turns it on with that low-pass coef. Applied in pre_physics_step.
+        if os.environ.get('HAND_EMA_COEF'):
+            self.add_hand_targets_smooth = True
+            self.hand_targets_smooth_coef = float(os.environ['HAND_EMA_COEF'])
+            print(f"[HAND_EMA] enabled via env: add_hand_targets_smooth=True coef={self.hand_targets_smooth_coef}")
         #### Hand targets smoothing coefficient ####
         
         
@@ -6018,6 +6042,38 @@ class AllegroHandTrackingGeneralist(BaseTask):
             self.max_consecutive_successes, self.av_factor,self.goal_cond, hand_up_threshold_1, hand_up_threshold_2 , len(self.fingertips), self.w_obj_ornt, self.w_obj_vels, self.separate_stages, self.hand_pose_guidance_glb_trans_coef, self.hand_pose_guidance_glb_rot_coef, self.hand_pose_guidance_fingerpose_coef, self.rew_finger_obj_dist_coef, self.rew_delta_hand_pose_coef, self.rew_obj_pose_coef, self.goal_dist_thres, envs_hand_qtars, self.cur_targets, self.use_hand_actions_rew, self.prev_dof_vel, self.cur_dof_vel, self.rew_smoothness_coef, self.early_terminate, self.env_cond_type, self.env_cond_hand_masks, self.train_free_hand,  self.cur_ornt_rew_coef, self.palm_grip_thres, self.palm_dist_rew_w, self.fix_finger5, self.right_hand_lf_pos, self.finger_pos_rew, self.finger_pos_coef, self.ref_fingertip_pos, self.palm_pos_rew, self.palm_pos_coef, self.ref_palm_pos
         )
 
+        # ---- comparable "fair" reward for wandb (ALWAYS flag@0.22, original coefs, no switches /
+        # no smoothness) -> config-independent task metric. Only reward output [0] is used; the
+        # jit fn is functional so the discarded reset/successes have no side effect. Gated by
+        # LOG_FAIR_REWARD (default on) so the extra per-step reward call can be disabled. ----
+        if self.log_fair_reward:
+          _fair_rew = compute_reward_func(
+            self.object_init_z, self.delta_qpos, self.delta_target_hand_pos, self.delta_target_hand_rot,
+            self.object_id_buf, self.dof_pos, self.rew_buf, self.reset_buf, self.reset_goal_buf,
+            self.progress_buf, self.successes, self.current_successes, self.consecutive_successes,
+            envs_episode_length, self.object_pos, self.object_handle_pos, self.object_back_pos, self.object_rot,
+            self.object_linvel, self.object_angvel, self.object_linvel, self.object_angvel,
+            self.goal_pos, self.goal_rot, self.goal_lifting_pos,
+            self.right_hand_pos, self.right_hand_ff_pos, self.right_hand_mf_pos, self.right_hand_rf_pos,
+            self.right_hand_th_pos,
+            self.dist_reward_scale, self.rot_reward_scale, self.rot_eps, self.actions, self.action_penalty_scale,
+            self.success_tolerance, self.reach_goal_bonus, self.fall_dist, self.fall_penalty,
+            self.max_consecutive_successes, self.av_factor, self.goal_cond, hand_up_threshold_1, hand_up_threshold_2, len(self.fingertips), self.w_obj_ornt, self.w_obj_vels, self.separate_stages,
+            0.6, 0.1, 0.1,
+            self.rew_finger_obj_dist_coef, self.rew_delta_hand_pose_coef, self.rew_obj_pose_coef, self.goal_dist_thres, envs_hand_qtars, self.cur_targets, self.use_hand_actions_rew, self.prev_dof_vel, self.cur_dof_vel,
+            0.0,
+            self.early_terminate, self.env_cond_type, self.env_cond_hand_masks, self.train_free_hand, self.cur_ornt_rew_coef,
+            0.22, 2.0, False, self.right_hand_lf_pos, False, self.finger_pos_coef, self.ref_fingertip_pos, False, self.palm_pos_coef, self.ref_palm_pos
+          )[0]
+          if (not hasattr(self, 'reward_fair_accum')) or self.reward_fair_accum.shape[0] != _fair_rew.shape[0]:
+              self.reward_fair_accum = torch.zeros_like(_fair_rew)
+              self.reward_fair_mean = 0.0
+          self.reward_fair_accum = self.reward_fair_accum + _fair_rew
+          _done_fair = self.reset_buf.bool()
+          if bool(_done_fair.any()):
+              self.reward_fair_mean = float(self.reward_fair_accum[_done_fair].mean())
+              self.reward_fair_accum[_done_fair] = 0.0
+
         self.extras['successes'] = self.successes
         self.extras['current_successes'] = self.current_successes
         self.extras['consecutive_successes'] = self.consecutive_successes
@@ -6415,6 +6471,21 @@ class AllegroHandTrackingGeneralist(BaseTask):
         self.gym.refresh_dof_state_tensor(self.sim)
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
+
+        # ---- CLIP_DOF: hard-enforce URDF joint limits on the actual hand dof state (anti reverse-joint /
+        # contact over-penetration). shadow_hand_dof_state is a view into dof_state; clamp pos to
+        # [lower,upper], zero vel where clamped, write back to sim. ----
+        if self.clip_dof_limits:
+            _pos = self.shadow_hand_dof_state[..., 0]
+            _clamped = torch.clamp(_pos, self.shadow_hand_dof_lower_limits.unsqueeze(0), self.shadow_hand_dof_upper_limits.unsqueeze(0))
+            _viol = (_pos != _clamped)
+            self.shadow_hand_dof_state[..., 1] = torch.where(_viol, torch.zeros_like(_pos), self.shadow_hand_dof_state[..., 1])
+            self.shadow_hand_dof_state[..., 0] = _clamped
+            _hidx = self.hand_indices.to(torch.int32)
+            self.gym.set_dof_state_tensor_indexed(self.sim, gymtorch.unwrap_tensor(self.dof_state), gymtorch.unwrap_tensor(_hidx), len(_hidx))
+            if not getattr(self, '_clip_printed', False):
+                print(f"[CLIP_DOF] active: clamped {int(_viol.sum())} joint-limit violations this step (enforcing URDF bounds)")
+                self._clip_printed = True
 
         if self.obs_type == "full_state" or self.asymmetric_obs or self.add_forece_obs:
             self.gym.refresh_force_sensor_tensor(self.sim)
@@ -12484,8 +12555,19 @@ class AllegroHandTrackingGeneralist(BaseTask):
             
             
         # else:
-        
-        
+
+        # training-time EMA low-pass on FINGER targets (dofs 6:) for anti-jitter. Applied here on the
+        # FINAL cur_targets (before prev_targets is saved) so it covers the kinematics-bias path that
+        # wuji uses (the cfg flag's own EMA at ~12343 only runs in the not_use_kine_bias branch).
+        # prev_targets still holds the PREVIOUS step's target at this point. Gated by add_hand_targets_smooth
+        # (env: HAND_EMA_COEF). Not penalized -> policy learns to compensate -> grasp can still form.
+        if self.add_hand_targets_smooth:
+            _ema_c = self.hand_targets_smooth_coef
+            self.cur_targets[:, 6:] = (1.0 - _ema_c) * self.cur_targets[:, 6:] + _ema_c * self.prev_targets[:, 6:]
+            if not getattr(self, '_ema_applied_printed', False):
+                print(f"[HAND_EMA] applied finger-target EMA coef={_ema_c} (dofs 6:) on kinematics-bias path")
+                self._ema_applied_printed = True
+
         self.prev_targets[:, self.actuated_dof_indices] = self.cur_targets[:, self.actuated_dof_indices]
 
         all_hand_indices = torch.unique(torch.cat([self.hand_indices]).to(torch.int32))
