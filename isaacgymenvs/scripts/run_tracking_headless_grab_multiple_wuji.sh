@@ -284,7 +284,7 @@ export train_name=tracking_${object_name}_obs_${obs_type}_density_${rigid_obj_de
 export full_experiment_name=${train_name}
 
 export tag=tracking_${object_name}
-export cuda_idx=2
+export cuda_idx="${cuda_idx:-2}"   # 可被环境变量覆盖, 默认2
 
 export pre_optimized_traj='runs/tracking_ori_grab_s2_apple_lift_obs_pure_state_wref_wdelta_density_500_trans_0.5_rot_0.5_goalcond_False_kinebais_wdelta_rewhandpos_dist__28-19-23-38/ts_to_hand_obj_obs_reset_1.npy'
 

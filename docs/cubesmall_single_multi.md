@@ -263,6 +263,24 @@ RELAX_PALM=1 FIX_FINGER5=1 PALM_POS_REW=1 PALM_POS_COEF=5.0 GLB_TRANS_COEF=2.0 G
 > **★ 三方消融(2026-06-08):加跑 `wuji_pinall3_multi`(G4,pinall3=轻#4 1.0+弱palm 1.0)拆解 plfp 为何行 ★** pinall_multi(重#4 1.5)0% / plfp_multi(轻#4+强palm5.0)96% / pinall3_multi(轻#4+弱palm)待训。pinall_multi 未停(用户要它跑完);pinall3_multi 用 plfp_flute 跑完腾出的 G4。tag 列表副本 `..._pinall3.npy`。
 > **★ 消融结论(ep490,inspect_1 举升%):pinall_multi(重#4 1.5)0% / pinall3_multi(轻#4 1.0+弱palm1.0)93% / plfp_multi(轻#4+强palm5.0)96% → 关键是"轻 #4",palm 强弱次要 ★** 重 #4 把手指钉在不夹物体的参考位置、在多样轨迹上罚死夹取所需的大残差→0%;轻 #4(≤1.0)松开手指→残差能去夹→93-96%。**正好解释单→多排名反转**:重#4 单序列能 work(残差小贴紧好),摊到多任务就拖死。**实操:多任务用轻#4(plfp/pinall3),别用 pinall 重#4。** s1_lift 两者 ep490 仍 0%(早期没学会该轨迹,inspect 类先成)。视频 `pinall3_multi_ep490_env*.mp4`。
 > **全任务 sweep(26 轨迹,mid-training:plfp ep903/pinall3 ep506/pinall ep891,fair@.22 + 举升%)**:plfp 均fair0.4/均举升17.8%/举起5/26;pinall3 -4.9/12.7%/3/26;pinall -53.0/8.9%/2/26。**plfp>pinall3>pinall 一致**。逐轨迹:三者都会 s2_inspect(99/93/94)、s10_pass(99/99/96);plfp/pinall3 会而 pinall 不会 s7_pass(96/97/0);只 plfp 会 s2_pass/s9_inspect。**大多数轨迹(几乎全部 lift/offhand 动作)三者仍 0%** → generalist 一簇一簇学、远未收敛,这是"reward 抬升慢"的真相(26 条只学会少数)。reward 曲线图 `render_videos/multi_reward_curves.png`、vs baseline `multi_vs_baseline.png`(同期 plfp≈baseline,baseline 训到 ep8090 峰值~66;pinall 重#4 明显垫底)。脚本 `fulltask_test.sh`。
+> **★ pinall3_multi 全 26 轨迹(收敛后,ckpt ep1851 rew65.19,2026-06-09,fair@.22 + 举升%)★**:**均 fair=36.7 / 均举升=36.8% / 举起(>50%)=10/26**(对比 ep506 时 3/26 → 训到 ep1851 翻到 10/26,确实在一簇簇学)。**清晰二分:inspect/pass 类几乎全成、lift/offhand 类全挂**。成功(10):s9/s2/s10/s7 的 inspect/pass→99%,s5_inspect93%,s9_pass89%,s3_inspect81%,s6_inspect78%。失败(16):**所有 6 条 `lift` + 所有 3 条 `offhand` 一律 0%**,部分 pass(s1/s4/s5/s6/s8)0–7%。**关键现象:fair 高 ≠ 能举**——s5_lift fair=95.8、s10_lift=107、s8_lift=63 却 0% 举升;因为 fair 主要计手位+物位跟踪,前半段贴参考就拿分,只是最后抬不起来。→ generalist 对"需要真正抬起物体"的动作(lift/offhand)仍未学会,inspect/pass(更多是贴近+移动、抬升幅度小)先收敛。脚本 `sweep_pinall3_multi.sh`。
+
+**★ 平滑方式调研(借鉴 wuji-mjlab/spider/wuji-retargeting,2026-06-09)★**:
+- **wuji-mjlab(厂商自己在这只手上的 RL)= `action-EMA(α0.5) + action_rate(1阶+2阶,-1.0) + torque(-24)` 组合**;
+- wuji-retargeting = 输出 `LPFilter` 低通;spider = reference 侧滤波+样条 + rollout 滑动平均;
+- **关键借鉴 = `action_rate` penalty**:`-coef·[‖aₜ−aₜ₋₁‖² + ‖aₜ−2aₜ₋₁+aₜ₋₂‖²]`,**在残差(策略输出)上、不碰 dof_vel** → 不像 jerk 罚参考加速,**不毁抓握**,且厂商验证过。
+- 已实现开关 `ACTION_RATE` + `ACTION_RATE_COEF`(残差历史 prev/prev_prev + jit 1阶+2阶项 + BREAKDOWN `actionRate`)。**坑:coef 0.01 太高**(actionRate=-1.02 压过整个 reward),raw≈100,**降到 0.0005**(actionRate≈-0.053,占 reward ~7%,合理且随策略变平滑自减)。
+- **全栈实验** `wuji_pinall3_full`(G2,pinall3+cg+clip+EMA0.6+action_rate0.0005,cubesmall 单):看严重抖动能否压下且不掉抓握。
+
+**★ top-5 测试结论(2026-06-09,逐帧抖动 |Δqpos|)★**:pinall3=0.351、**cg=0.658(翻倍!cg 是抖动元凶——拽手指碰接触点)**、**clip=12.5(爆抖!CLIP_DOF 硬钳 dof_pos+set_dof_state 每步 → 限位 chattering,实现有缺陷)**、full=0.309(EMA0.6 把 cg+clip 的抖都压平,但 fair 179→64、手指 4.14→9.07,过头)。lift:cg/clip/full 都 99%(cubesmall),**但 cgclip_flute 仍 0%(contact guidance 没救 flute,fair 升到 13 但举不起)**。教训:**clip 别用(chattering)、EMA0.6 太狠、cg 价值存疑(增抖不增益)**。
+**🏃 cg+smooth 批(2026-06-09,smooth=EMA0.4+action_rate0.0005,无clip)**:`wuji_pinall3_cg_smooth_single`(G1)、`_smooth_flute`(G2,max_epochs=3000)、`_smooth_multi`(G5)、`wuji_pinall3_cg_multi`(G7,cg-only对照)。脚本 `max_epochs/episodeLength` 改成 `${MAX_EPOCHS}/${EPISODE_LENGTH}` 可 env 覆盖。停了 pinall_multi(垫底)/plfp_multi(最优,已刻画)。
+
+**★★ flute 重大修正(2026-06-10):flute 不是死路,之前 0% 是指标误导 ★★**
+- **指标 bug**:之前判 flute 0% 用的是"**峰值位移帧**物体跟踪<5cm"。pass 动作峰值在最远最高的极点(1.24m),策略恰好在那丢杆 → 报 0%。但**前中段(前 ~140-160 帧)抓得很稳**(误差<3cm)。**正确指标看全程跟随/持握时长,不能只看峰值帧**(lift/offhand/pass 大动作类都受此 bug 影响,之前的成功率可能都偏低)。
+- **实情(s2_flute_pass_1)**:两个手都**抓住 flute 并带过大半 pass**——allegro 物体移动中位 0.71m/持握 5.4s、wuji_cg_smooth 0.54m/4.6s、cgclip 0.53m/4.8s(参考 1.24m)。只在 pass 极端伸展点撑不住(wuji 长手指+细杆够不到)。**有 bonus**(step1 实测 0.97),持握那段一直拿。
+- **fair@0.22 排名**:cgclip **+2.24**(唯一正,最好)> cg_smooth −10.54 > pinall3(无cg) −41.59。**cg 是主要功臣**(两个 cg 变体都远超 pinall3 基线;flute 是杆状,contact guidance 帮手指找接触点特别有用)。clip 大概率中性(cubesmall multi 已证 clip 无正作用),cgclip>cg_smooth 更可能是 smooth 在 flute 大动作上有害。**起 `wuji_pinall3_cg_flute_single`(G2,纯 pinall3+cg,无 clip/smooth)一锤定音**;停了 `cg_smooth_flute`。
+- **flag-morphology(关键!)**:`palm_grip_thres`(握住 flag)gate 的不只是 bonus,还有 `goal_hand_rew = where(flag==2, −2·goal_dist, 0)` 的**物体位置惩罚**。**wuji 长手指 → 握住时手掌离物体 0.12~0.22,必须 flag@0.22 才被认成握住、才拿 bonus**(@0.12 时 wuji bonus 全丢 → fair −115.69);allegro 短手指天生 @0.12。**所以 RELAX_PALM(0.12→0.22)对 wuji 是必需的,且跨手 fair 不可直接比**(@0.22 对 allegro 偏苛:它丢杆的帧 palm 落在 0.12~0.22 被判"握住"→ 吃 −2·goal_dist 狠罚 → allegro fair@0.22 −49.81，但 native@0.12 是 +39)。
+- 视频:`report_videos/{allegro_flute,cg_smooth_flute,cgclip_flute}/ref_vs_policy.gif` + `flute_4panel/`(4 格同视角;给 playback 加了 `--cam_eye/--cam_target` 固定相机)。**渲染参考别用 `ls *flute_pass_1*` 通配**(匹配 s1/s2/s6/s9/s10 多被试,head 取错),要显式完整文件名。
 
 **治法**:抗抖动需训练侧手段,但**别用 jerk-on-dof_vel**(§8.6 已证毁抓握——它连参考的抓-举加速一起罚)。只约束残差的方向(均需先确认在 kinematics-bias 路径上生效,见上 EMA 的坑):① **action-rate penalty** `‖residualₜ−residualₜ₋₁‖`(最对症,需加项);② **训练期 EMA** `add_hand_targets_smooth`(机制最干净=不罚只滤,但**代码只在 `not_use_kine_bias` 分支,wuji 路径要先把低通搬过去**——非零代码);③ 调大 **action-L2** `actionPenaltyScale`(现 -0.0002 → 更大,残差更小,需先验证它在活跃路径上确实生效)。`add_torque/work/global_motion_penalty` 同理需防过罚抓握。
 
@@ -378,6 +396,57 @@ RELAX_PALM=1 FIX_FINGER5=1 PALM_POS_REW=1 PALM_POS_COEF=5.0 GLB_TRANS_COEF=2.0 G
 **改进 = 硬化 URDF 限位(不是设0)**:独立开关 `CLIP_DOF`(默认关)。`compute_observations` 刷新后把 hand dof_pos 钳到 `[lower,upper]`、钳处速度归零、`set_dof_state_tensor_indexed` 写回 sim。验证 `[CLIP_DOF] clip_dof_limits=True` + `active: clamped N violations`(每步在跑;set_dof_state 每步写回未写崩训练)。
 
 **实验**:`wuji_pinall3_clip`(G2,pinall3+CLIP_DOF,cubesmall 单)vs **已有 pinall3**(179.63/99%)。看点:clip 是否**不掉举升**的前提下让手更干净(rollout 全程不超界 + 渲染无反关节弹动 + 顺带压抖)。测时硬验:对照无clip rollout 冲到 -2.5,clip 版应全程 ≤ URDF 界。
+
+### 8.8b 反关节复盘 + 软惩罚（2026-06-10,改用 soft penalty 替代硬 clip）
+
+**复盘 clip 有没有用(cgclip vs cg 多序列,fair 同 epoch 隔离):** 早期(ep<400)cgclip 略快,**ep500 起 cg(无clip)反超并领先**(ep700-800:cg 51.8 vs cgclip 40.6),cg 斜率还更陡;clip 每步 set_dof_state **慢 ~25%**。→ **clip 对 reward 无正作用**,绝对值高只是训得久。
+
+**但 clip 不是"空操作"(修正之前结论):** test 时 cgclip `clamped 0 violations`(收敛策略已学乖、不超界),但**无 clip 的策略确实冲出 URDF**:`p3msw`(pinall3)joint3 到 −0.567(轻微);**`cg-only` −1.28(9% env)、`cg_smooth` −2.19(49% env、各 ~8/300 帧)**。即 **contact_guide 把手指往接触点卷→引反关节,smooth(EMA+action_rate)放大一大截**;clip 训练时 clamp、策略因此学会不超界。但越界是**短暂尖刺**(0.14% 帧),且**不影响任务 reward**(cg_smooth 照样 95-99% 跟踪)。越界遍布各 joint(joint2 外展下界 50-75% 帧 marginal、joint1/3/4 幅度大)。
+
+**结论:clip 有效(阻越界)但没用(越界不损 reward)+ 代价大(慢+单序列 chatter 12.5)。** 渲染/真机在乎"手指反折"才需治 → **选软惩罚,不用硬 clip**(避开 chatter+慢,且教策略自己避开、可泛化)。
+
+**实现 `SOFT_LIMIT`(默认关,task __init__ + compute_reward Python侧):** 对**achieved 手指 qpos**(`shadow_hand_dof_pos[:,6:]`,**20 指节全做、跳 6 个全局**)做 **quadratic hinge 双向**惩罚:`−coef·Σ_j[relu(lo−q)²+relu(q−hi)²]`,用各 joint URDF [lower,upper]。`SOFT_LIMIT_COEF` 可调。**加在 fair 调用之后 → fair 保持干净可比**。quadratic 自动分级:marginal 越界(joint2 0.01)≈0、严重(1-2rad)狠罚。参考贴在界上(−0.47)→ relu=0 不被罚,符合"保留参考用反关节"。step1 打印 `[SOFT_LIMIT] active mean_pen max_pen` 验证量级。
+
+**实验**:`wuji_pinall3_cg_smooth_softclip`(=pinall3+cg+smooth+SOFT_LIMIT coef0.5,G1,26 cubesmall,FPOS,wandb `wuji_pinall3_cg_smooth_softclip_multi`)。启动验证:GPU1、所有开关 active、`mean_pen=0.0153 max_pen=7.91`(平均可忽略、只狠罚严重越界 env,不压垮)。脚本 `run_tracking_headless_grab_multiple_wuji.sh` 第287行 cuda_idx 改成 `${cuda_idx:-2}` 可 env 覆盖(注意 `$1` 同时给 GPU 和 st_idx,st_idx 对 tag-list 运行无关)。
+
+**★★ test 结论(2026-06-10,softclip 划算):** 匹配 epoch test(cg_smooth `last_ep_1000` vs softclip `best_ep_936`,3 轨迹 s2_inspect/s2_pass/s10_pass,HAND_EMA=0.4,fair@0.22)：
+
+| | fair@0.22 均 | 反关节 env 峰值>0.5 占比 | max 越界深度 |
+|---|---|---|---|
+| cg_smooth ep1000 | **92.3** | **36%** | 3.07 |
+| softclip ep936 | **88.3** | **5%** | 1.43 |
+
+**softclip:fair 仅 −4(噪声内,s2_pass 还 109.8>106.5 反超),反关节 env 占比 36%→5%(7× 少)、最深 3.07→1.43。最严重的 s2_inspect:94%→13%。** → **近乎零代价换掉绝大部分反关节,coef=0.5 合适。** 反关节深度 = `Σ_{20指节}relu(lower−q)` 从 rollout `shadow_hand_dof_pos[:,6:26]` 算,wuji dof 下限见 `/tmp/wuji_dof_limits.npy`(joint3/4≈−0.47)。
+
+**坑(重要):wandb 严重滞后训练 ~1240 epoch**(reward_fair 只同步到 ep687,本地实际 ep1927)。**fair 全程曲线要读本地 tensorboard**(`logs/<run>/.../summaries/events*`,`reward_fair/iter` 完整 n=1932),`event_accumulator` + `size_guidance={'scalars':0}` 不降采样;**别信 wandb summary/history(截断)**。真·fair 曲线对比图 `wuji_pipeline/out/softclip_vs_nosoftclip_fair_REAL.png`:softclip 收敛慢但向 cg_smooth/cg 带收拢(ep930 差 −14 训练态、但 test 态只 −4);cg_smooth≈cg 高 epoch 略胜。test 柱状图 `softclip_test_fair_vs_reversejoint.png`。
+
+### 8.9 contact guidance（借鉴 SPIDER，师兄改进#2,2026-06-08）
+
+**来源**:SPIDER(facebookresearch,arXiv 2511.09484,物理引导重定向)的 contact guidance —— `exp(-β·dist)` 正奖励,把机器人指尖吸引到**人手在物体上的接触点**(从接触检测来),逐指、flag 门控。补 DexTrack 最大短板:**只跟踪 qpos、无"该接触物体哪儿"信号 → 抓握脆弱、flute 失败**。
+
+**数据(自洽生成,GRAB 无现成接触标注)**:`wuji_pipeline/generate_contact_guidance.py` —— 几何版 detect_contact:每帧把物体 mesh 按位姿变换、算每指尖到表面最近距离 → `<阈值(1.2cm)` 为接触。输出 `contact_flag(T,5)` + `contact_pos_local(T,5,3)`(物体系接触点)+ `contact_dist`,存 `<FPOS>/contact/<traj>_contact.npy`。**坑**:trimesh.closest_point 需 rtree(没装)→ 改 scipy cKDTree 查最近顶点(mesh 密,≈表面);quat 约定**固定 xyzw**(任务 5105/4640 行确认,别自动判)。验证:cubesmall=拇指+食指+中指三指接触(85-88%帧,frame37→末持握);**flute 也有有效接触目标**(f1/f2/f3 碰杆 frame19-135)→ 有望救 flute。
+
+**reward 实现**(独立开关 `CONTACT_GUIDE`,默认关;`CONTACT_COEF`默1.0、`CONTACT_BETA`默30):
+- 加载(__init__ ~4083,按 data_inst_tag_list 顺序,**注意 tag 是 tuple 取[0]**)→ `tot_contact_pos_local/flag`;
+- compute_reward(~5984)按 progress 取每帧接触点,**用活物体位姿变换到世界系**(`object_pos + quat_apply(object_rot, contact_pos_local)`,随物体举起而动);
+- jit reward 项:`+coef · mean_{接触指}[ exp(-β·‖sim指尖−目标接触点‖) ]`,flag 门控;指序 `[th,ff,mf,rf,lf]=ref finger1..5`(和 #4 一致)。BREAKDOWN 加 `contactGuide`。
+- 验证:`loaded contact data (1,300,5,3)` + `ref_contact_world=(N,5,3) flag_mean=0.52` + `contactGuide=0.019`(非0,随训练涨)。
+
+**实验**:`wuji_pinall3_cg`(G3,pinall3 + CONTACT_GUIDE,cubesmall 单)vs 已有 pinall3(179/99%)。看点:抓握更稳/更实(指尖真在接触点)+ 可能救 flute(下一步生成 flute 接触 + 试)。
+
+**组合实验(pinall3 + CG + CLIP,2026-06-09)**:批量生成全 27 条接触(26 cubesmall + flute,`generate_contact_guidance.py --save`,xyzw 固定)后起两个:
+- `wuji_pinall3_cgclip_multi`(G6,cubesmall 多,加载 22 条 train-split 接触);
+- `wuji_pinall3_cgclip_flute`(G1,flute 单,停掉已收敛的 baseline 腾卡)——**contact guidance 救 flute 的关键检验**(显式驱动指尖碰杆 + clip 防反关节)。
+两者 clip+cg 均验证生效(contactGuide 非0、接触加载无 MISSING)。注:`add_contact_conditions` 旧基建用 `<traj>_contact_flag.npy` 命名,我们的新数据是 `<traj>_contact.npy`(独立);loading 在 __init__ ~4083 按 data_inst_tag_list 顺序(tag 是 tuple,取 [0])。
+
+### 8.10 GRAB 真值接触(B 版)+ cg_smooth 对照实验（2026-06-10）
+
+A 版接触(8.9)用 wuji 重定向指尖投影到表面,继承重定向误差。**B 版改用 GRAB 原数据真值接触**(`contact['object']` 标注的人手真实接触顶点),生成器 `wuji_pipeline/generate_contact_guidance_grab.py`,全 27 条已生成到 `data/.../contact_grab/`。三处对齐全解决(标签=GRAB tools/utils.py contact_ids、网格=仿真 obj×1.25 同序、帧=重跑 assemble_wuji_reference.fit_crop,corr=1.0;唯 s8_lift corr=0.877)。A-vs-B 实测:flag 97-100%同,接触点差 cubesmall 拇指1.9cm / flute A过检flag 30-40%。**完整记录见 [docs/grab_contact_guidance_plan.md]**;接触点叠在渲染视频里的对比已上 Drive(grab_contact_guidance/)。
+
+**启动 3 个 cg_smooth+B(`CONTACT_SUBDIR=contact_grab` 新开关切换,task.py:4097):**
+- **G3 多序列** `..._cg_smooth_grabct`(22 insts,ep10000)→ 对照 **G5 `cg_smooth`(A 版)**,看真值接触对 fair + 反关节有没有用(核心检验)。
+- **G4 cubesmall_inspect 单 / G6 flute_pass 单**(cg_smooth+B,ep3000)→ 看 B 两种修正模式。
+- 停掉腾卡:pinall3_full / pinall3 baseline / pinall3_cgclip(均已证无用)。日志确认 `contact source dir=.../contact_grab`。
 
 ---
 

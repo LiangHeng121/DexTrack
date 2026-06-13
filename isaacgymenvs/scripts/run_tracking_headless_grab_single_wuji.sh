@@ -216,8 +216,8 @@ export debug="--debug"
 # export debug=""
 # export st_idx=0
 
-export episodeLength=1000
-export max_epochs=1000
+export episodeLength="${EPISODE_LENGTH:-1000}"
+export max_epochs="${MAX_EPOCHS:-1000}"
 
 
 export grab_obj_type_to_opt_res_fn=''
