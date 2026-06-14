@@ -323,7 +323,13 @@ class AllegroHandTrackingGeneralist(BaseTask):
         # IDLE_HOLD_COEF: >0 -> 对不接触的手指(contact_flag~0)额外加"保持参考指尖位"惩罚,
         # 防止闲指(如cube抓取里的小拇指)乱甩。与contact_guide互补(接触指拉向接触点,闲指保持参考)。
         self.idle_hold_coef = float(os.environ.get('IDLE_HOLD_COEF', '0.0'))
-        print(f"[IDLE_HOLD] idle_hold_coef={self.idle_hold_coef}")
+        # IDLE_HOLD_DOF: 1 -> 拉关节角(DOF空间, delta_qpos, 约束整根手指姿态, 默认/推荐);
+        #                0 -> 拉指尖位置(world, 旧版, 欠定4关节易出不自然中间姿态)
+        self.idle_hold_use_dof = float(os.environ.get('IDLE_HOLD_DOF', '1'))
+        # IDLE_HOLD_BETA: DOF版用有界奖励 +coef·exp(-beta·‖Δ关节角‖)(贴参考给正奖励,远了≈0不爆),
+        # 而非无界距离惩罚(后者像huber一样早期偏差大就压过跟踪reward). beta 控制衰减(rad).
+        self.idle_hold_beta = float(os.environ.get('IDLE_HOLD_BETA', '3.0'))
+        print(f"[IDLE_HOLD] idle_hold_coef={self.idle_hold_coef} use_dof={self.idle_hold_use_dof} beta={self.idle_hold_beta}")
         # action_rate penalty (wuji-mjlab recipe): -coef * [ ||a_t - a_{t-1}||^2 + ||a_t - 2 a_{t-1} + a_{t-2}||^2 ]
         # on the policy residual (NOT dof_vel) -> doesn't penalize the reference's accel, so unlike the jerk
         # reward it shouldn't destroy the grasp. Pairs with HAND_EMA. Default off.
@@ -6122,7 +6128,7 @@ class AllegroHandTrackingGeneralist(BaseTask):
             self.right_hand_th_pos, # 
             self.dist_reward_scale, self.rot_reward_scale, self.rot_eps, self.actions, self.action_penalty_scale,
             self.success_tolerance, self.reach_goal_bonus, self.fall_dist, self.fall_penalty,
-            self.max_consecutive_successes, self.av_factor,self.goal_cond, hand_up_threshold_1, hand_up_threshold_2 , len(self.fingertips), self.w_obj_ornt, self.w_obj_vels, self.separate_stages, self.hand_pose_guidance_glb_trans_coef, self.hand_pose_guidance_glb_rot_coef, self.hand_pose_guidance_fingerpose_coef, self.rew_finger_obj_dist_coef, self.rew_delta_hand_pose_coef, self.rew_obj_pose_coef, self.goal_dist_thres, envs_hand_qtars, self.cur_targets, self.use_hand_actions_rew, self.prev_dof_vel, self.cur_dof_vel, self.rew_smoothness_coef, self.early_terminate, self.env_cond_type, self.env_cond_hand_masks, self.train_free_hand,  self.cur_ornt_rew_coef, self.palm_grip_thres, self.palm_dist_rew_w, self.fix_finger5, self.right_hand_lf_pos, self.finger_pos_rew, self.finger_pos_coef, self.ref_fingertip_pos, self.palm_pos_rew, self.palm_pos_coef, self.ref_palm_pos, self.contact_guide, self.contact_guide_coef, self.contact_guide_beta, self.contact_guide_huber_delta, self.ref_contact_world, self.ref_contact_flag, self.action_rate_rew, self.action_rate_coef, self.prev_actions, self.prev_prev_actions, self.idle_hold_coef
+            self.max_consecutive_successes, self.av_factor,self.goal_cond, hand_up_threshold_1, hand_up_threshold_2 , len(self.fingertips), self.w_obj_ornt, self.w_obj_vels, self.separate_stages, self.hand_pose_guidance_glb_trans_coef, self.hand_pose_guidance_glb_rot_coef, self.hand_pose_guidance_fingerpose_coef, self.rew_finger_obj_dist_coef, self.rew_delta_hand_pose_coef, self.rew_obj_pose_coef, self.goal_dist_thres, envs_hand_qtars, self.cur_targets, self.use_hand_actions_rew, self.prev_dof_vel, self.cur_dof_vel, self.rew_smoothness_coef, self.early_terminate, self.env_cond_type, self.env_cond_hand_masks, self.train_free_hand,  self.cur_ornt_rew_coef, self.palm_grip_thres, self.palm_dist_rew_w, self.fix_finger5, self.right_hand_lf_pos, self.finger_pos_rew, self.finger_pos_coef, self.ref_fingertip_pos, self.palm_pos_rew, self.palm_pos_coef, self.ref_palm_pos, self.contact_guide, self.contact_guide_coef, self.contact_guide_beta, self.contact_guide_huber_delta, self.ref_contact_world, self.ref_contact_flag, self.action_rate_rew, self.action_rate_coef, self.prev_actions, self.prev_prev_actions, self.idle_hold_coef, self.idle_hold_use_dof, self.idle_hold_beta
         )
 
         # ---- comparable "fair" reward for wandb (ALWAYS flag@0.22, original coefs, no switches /
@@ -12957,7 +12963,7 @@ def compute_hand_reward_tracking(
         dist_reward_scale: float, rot_reward_scale: float, rot_eps: float,
         actions, action_penalty_scale: float,
         success_tolerance: float, reach_goal_bonus: float, fall_dist: float,
-        fall_penalty: float, max_consecutive_successes: int, av_factor: float, goal_cond: bool, hand_up_threshold_1: float, hand_up_threshold_2: float, num_fingers: int, w_obj_ornt: bool, w_obj_vels: bool, separate_stages: bool, hand_pose_guidance_glb_trans_coef: float, hand_pose_guidance_glb_rot_coef: float , hand_pose_guidance_fingerpose_coef: float, rew_finger_obj_dist_coef: float, rew_delta_hand_pose_coef: float, rew_obj_pose_coef: float, goal_dist_thres: float , envs_hand_qtars, env_hand_cur_targets, use_hand_actions_rew: bool, prev_dof_vel, cur_dof_vel, rew_smoothness_coef: float, early_terminate: float, env_cond_type, env_cond_hand_masks, train_free_hand: bool, cur_ornt_rew_coef: float, palm_grip_thres: float = 0.12, palm_dist_rew_w: float = 2.0, fix_finger5: bool = False, right_hand_lf_pos: Optional[torch.Tensor] = None, finger_pos_rew: bool = False, finger_pos_coef: float = 0.0, ref_fingertip_pos: Optional[torch.Tensor] = None, palm_pos_rew: bool = False, palm_pos_coef: float = 0.0, ref_palm_pos: Optional[torch.Tensor] = None, contact_guide: bool = False, contact_guide_coef: float = 0.0, contact_guide_beta: float = 30.0, contact_guide_huber_delta: float = 0.0, ref_contact_world: Optional[torch.Tensor] = None, ref_contact_flag: Optional[torch.Tensor] = None, action_rate_rew: bool = False, action_rate_coef: float = 0.0, prev_actions: Optional[torch.Tensor] = None, prev_prev_actions: Optional[torch.Tensor] = None, idle_hold_coef: float = 0.0
+        fall_penalty: float, max_consecutive_successes: int, av_factor: float, goal_cond: bool, hand_up_threshold_1: float, hand_up_threshold_2: float, num_fingers: int, w_obj_ornt: bool, w_obj_vels: bool, separate_stages: bool, hand_pose_guidance_glb_trans_coef: float, hand_pose_guidance_glb_rot_coef: float , hand_pose_guidance_fingerpose_coef: float, rew_finger_obj_dist_coef: float, rew_delta_hand_pose_coef: float, rew_obj_pose_coef: float, goal_dist_thres: float , envs_hand_qtars, env_hand_cur_targets, use_hand_actions_rew: bool, prev_dof_vel, cur_dof_vel, rew_smoothness_coef: float, early_terminate: float, env_cond_type, env_cond_hand_masks, train_free_hand: bool, cur_ornt_rew_coef: float, palm_grip_thres: float = 0.12, palm_dist_rew_w: float = 2.0, fix_finger5: bool = False, right_hand_lf_pos: Optional[torch.Tensor] = None, finger_pos_rew: bool = False, finger_pos_coef: float = 0.0, ref_fingertip_pos: Optional[torch.Tensor] = None, palm_pos_rew: bool = False, palm_pos_coef: float = 0.0, ref_palm_pos: Optional[torch.Tensor] = None, contact_guide: bool = False, contact_guide_coef: float = 0.0, contact_guide_beta: float = 30.0, contact_guide_huber_delta: float = 0.0, ref_contact_world: Optional[torch.Tensor] = None, ref_contact_flag: Optional[torch.Tensor] = None, action_rate_rew: bool = False, action_rate_coef: float = 0.0, prev_actions: Optional[torch.Tensor] = None, prev_prev_actions: Optional[torch.Tensor] = None, idle_hold_coef: float = 0.0, idle_hold_use_dof: float = 1.0, idle_hold_beta: float = 3.0
 ):
     if separate_stages:
         lowest = object_pos[:, 2].unsqueeze(-1).repeat(1, 3)
@@ -13359,15 +13365,29 @@ def compute_hand_reward_tracking(
     # 闲着的小拇指/无名指乱甩(实测 pinky 参考只动39°/策略甩239°). finger order [th,ff,mf,rf,lf]. ----
     idle_hold_value = torch.zeros_like(reward)
     if idle_hold_coef > 0.0:
-        if (ref_fingertip_pos is not None) and (ref_contact_flag is not None):
-            _ih = (1.0 - ref_contact_flag[:, 0]) * torch.norm(right_hand_th_pos - ref_fingertip_pos[:, 0], p=2, dim=-1)
-            _ih = _ih + (1.0 - ref_contact_flag[:, 1]) * torch.norm(right_hand_ff_pos - ref_fingertip_pos[:, 1], p=2, dim=-1)
-            _ih = _ih + (1.0 - ref_contact_flag[:, 2]) * torch.norm(right_hand_mf_pos - ref_fingertip_pos[:, 2], p=2, dim=-1)
-            _ih = _ih + (1.0 - ref_contact_flag[:, 3]) * torch.norm(right_hand_rf_pos - ref_fingertip_pos[:, 3], p=2, dim=-1)
-            if right_hand_lf_pos is not None:
-                _ih = _ih + (1.0 - ref_contact_flag[:, 4]) * torch.norm(right_hand_lf_pos - ref_fingertip_pos[:, 4], p=2, dim=-1)
-            idle_hold_value = _ih
-            reward = reward + (-idle_hold_coef) * idle_hold_value
+        if ref_contact_flag is not None:
+            if idle_hold_use_dof > 0.5:
+                # DOF版(推荐): 闲指 4 关节角偏离参考, 用有界奖励 +coef·(1-flag)·exp(-beta·‖Δ‖2).
+                # 贴参考(Δ→0)给≈coef正奖励、远了≈0(不像无界惩罚那样早期爆掉跟踪reward).
+                # delta_qpos[:,6:]=20指DOF [th,ff,mf,rf,lf]x4. 约束整根手指姿态(与手掌解耦).
+                _fd = delta_qpos[:, 6:]
+                _ih = (1.0 - ref_contact_flag[:, 0]) * torch.exp(-idle_hold_beta * torch.norm(_fd[:, 0:4], p=2, dim=-1))
+                _ih = _ih + (1.0 - ref_contact_flag[:, 1]) * torch.exp(-idle_hold_beta * torch.norm(_fd[:, 4:8], p=2, dim=-1))
+                _ih = _ih + (1.0 - ref_contact_flag[:, 2]) * torch.exp(-idle_hold_beta * torch.norm(_fd[:, 8:12], p=2, dim=-1))
+                _ih = _ih + (1.0 - ref_contact_flag[:, 3]) * torch.exp(-idle_hold_beta * torch.norm(_fd[:, 12:16], p=2, dim=-1))
+                _ih = _ih + (1.0 - ref_contact_flag[:, 4]) * torch.exp(-idle_hold_beta * torch.norm(_fd[:, 16:20], p=2, dim=-1))
+                idle_hold_value = _ih
+                reward = reward + idle_hold_coef * idle_hold_value
+            elif ref_fingertip_pos is not None:
+                # 指尖版(旧, IDLE_HOLD_DOF=0): 闲指指尖world位置偏离参考
+                _ih = (1.0 - ref_contact_flag[:, 0]) * torch.norm(right_hand_th_pos - ref_fingertip_pos[:, 0], p=2, dim=-1)
+                _ih = _ih + (1.0 - ref_contact_flag[:, 1]) * torch.norm(right_hand_ff_pos - ref_fingertip_pos[:, 1], p=2, dim=-1)
+                _ih = _ih + (1.0 - ref_contact_flag[:, 2]) * torch.norm(right_hand_mf_pos - ref_fingertip_pos[:, 2], p=2, dim=-1)
+                _ih = _ih + (1.0 - ref_contact_flag[:, 3]) * torch.norm(right_hand_rf_pos - ref_fingertip_pos[:, 3], p=2, dim=-1)
+                if right_hand_lf_pos is not None:
+                    _ih = _ih + (1.0 - ref_contact_flag[:, 4]) * torch.norm(right_hand_lf_pos - ref_fingertip_pos[:, 4], p=2, dim=-1)
+                idle_hold_value = _ih
+                reward = reward + (-idle_hold_coef) * idle_hold_value
     # ---- action_rate penalty (wuji-mjlab): -coef*[ ||a_t-a_{t-1}||^2 + ||a_t-2a_{t-1}+a_{t-2}||^2 ] on residual ----
     action_rate_value = torch.zeros_like(reward)
     if action_rate_rew:
