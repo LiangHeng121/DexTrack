@@ -712,8 +712,8 @@ export single_instance_state_based_train=False
 export target_inst_tag_list_fn=${TAGLISTFN}
 export log_path=./logs/isaacgym_rl_allegro_multiple
 
-export numEnvs=40000
-export minibatch_size=40000
+export numEnvs=${numEnvs:-40000}
+export minibatch_size=${minibatch_size:-40000}
 
 
 

@@ -113,3 +113,5 @@ wuji/
 retargeting/
 # generated FK fingertip intermediates (regenerable via wuji_pipeline scripts)
 wuji_pipeline/out/fpos_npz/
+spider/
+wuji-mjlab/
