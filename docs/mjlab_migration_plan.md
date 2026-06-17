@@ -162,8 +162,18 @@ wuji 厂商官方栈:wuji-mjlab(任务+部署)→ mjlab==1.3.0 → MuJoCo + mujo
 - **cgsmooth_B2_softclip**:也举起、fair 213(−10%,符合 DexTrack "平滑换约 11% fair")、**接触距离最紧 0.86cm → contact_guide(B2)确实把手指拉到接触点**。**但** 500iter 下指误差/抖动反而更高(0.72/0.027)——9 项 reward 比 6/4 项收敛慢、欠训;HAND_EMA 滞后也松了手指(DexTrack 同观察 finger 1.74→2.14)。**DexTrack 的抖动↓28% 是 ep1000 才显现**,500iter 看不到平滑收益。
 - **结论**:① 原始 reward 不可用(不举);② pinall3 是当前最稳选择;③ cgsmooth 的 B2 接触收紧已验证有效,但平滑收益需训到 ~1000-1500iter 才显现(待选做)。
 
+### ★ fair reward 进 wandb/tb + 多序列就绪(2026-06-17)
+- **fair_reward_metric**(rewards.py):config 无关的 canonical fair(0.6/0.1/0.1,grip0.22,palm2.0,4指,无补丁)每步写 `extras['log']['fair_reward']`,返回 0 不影响训练。三档共享同一条 `Episode/fair_reward` 实时曲线(tb 默认;agent cfg `logger="wandb"` 切 wandb)。已加到所有 reward_mode。
+- **三档策略视频**:`mjlab_cubesmall_cmp_{Original,Pinall3,CGSmooth}.mp4`(Original 0.042 不举/Pinall3 0.408/CGSmooth 0.409)。渲染工具 `dextrack_tools/render_policy.py`。
+- **多序列 generalist 就绪**:commands.py 扩展为多序列(stacked S×T,per-env `env_seq` 随机分配、reset 重抽),env_cfgs `wuji_hand_cubesmall_multi_tracking_env_cfg`(**23 个 cubesmall 序列 s1-s10 inspect/lift/pass,排除 3 个 offhand**),per-seq latent+contact。注册 `WujiHand_Tracking_CubesmallMulti_{Original,Pinall3,CGSmooth}`。smoke 过(obs 499、term 5/7/10、fair 记录、接触加载)。
+- **待 launch(用户腾 3 卡后,每卡一档并行)**:
+  ```
+  CUDA_VISIBLE_DEVICES=<g> pixi run train --task WujiHand_Tracking_CubesmallMulti_<R> --env.scene.num-envs 22000 --agent.max-iterations <N>
+  ```
+  (R=Original/Pinall3/CGSmooth)。22000env 单档 ~62GB 适配一张 A100。
+
 ### ★ TODO(待办)
-- **cgsmooth 训更久**(可选):三档都只 500iter;cgsmooth 9 项 reward 欠训,延到 1000-1500iter 才能量化 HAND_EMA/action_rate 的抖动↓收益(对照 DexTrack ep1000 抖↓28%)。
+- **cgsmooth 训更久**(可选):单序列三档都只 500iter;cgsmooth 9 项 reward 欠训,延到 1000-1500iter 才能量化 HAND_EMA/action_rate 的抖动↓收益(对照 DexTrack ep1000 抖↓28%)。多序列可直接训足。
 - **目标对齐 DexTrack**:除 reward 外尽量一致(只换模拟器)。动作 wdelta✅、obs full499✅、三档 reward 补丁✅(本次)、kp 为 MuJoCo 侧必要改动(见 kp 消融)。
 
 ### git / 协作基建(2026-06-16 搭好)
