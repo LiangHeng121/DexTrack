@@ -185,7 +185,7 @@ wuji 厂商官方栈:wuji-mjlab(任务+部署)→ mjlab==1.3.0 → MuJoCo + mujo
 | entropy_coef | 0.0 | 0.001 | **0.0** |
 | gamma/lam/grad_norm/e_clip/minibatch数 | 0.99/0.95/1.0/0.2/32 | 同 | ✓ 本就对齐 |
 
-- **★ 40000 env 单卡装不下(模拟器差异)**:40000+net v4 **OOM 76.97GB**(第一次 PPO 更新时 minibatch=40000 过 net v4 反向 ~52GB + sim ~25GB);30000 也在 iter0 后 warp OOM(+别的用户挤占)。**DexTrack 40000+v4 几乎肯定多卡(脚本 nn_gpus)**;PhysX 接触内存也远比 mujoco-warp 省。单卡 mujoco-warp + net v4 的稳妥上限 ≈ **22000 env**(实测 55GB/留 25GB 余量)。→ env 数 22000 是被单卡内存所迫的唯一额外偏差。
+- **★ 单卡最大 env 数 = 26000(模拟器差异,非那两个数)**:OOM 信息显示 `PyTorch only 102MB allocated`——**76.97GB 几乎全是 mujoco-warp 每个 world 的固定状态**(qpos/qvel/xpos/contact 等,~2MB/env),不随 nconmax/njmax 走。把 96/512→64/256 砍小后 40000 仍在 **warp CUDA graph 创建 OOM**(78GB)。瓶颈是 warp 的 graph-launch 瞬时峰值(≈稳态+15GB)。实测:22000=55GB稳、**26000=70GB稳(可跑最大)**、30000=62GB稳态但 iter0 后 graph_launch 峰值 OOM、40000=graph创建 OOM。**DexTrack 单卡能 40000 是因为 PhysX 每 env 比 mujoco-warp 省 2-3×** —— 这是"只换模拟器"的硬代价,不是参数没调对。→ env 26000(而非40000)是被 mujoco-warp 单卡内存所迫的唯一额外偏差;nconmax/njmax 保持原 96/512(砍小救不了40000且未验证物理)。
 - **fair reward 进 wandb ✓**:`fair_reward_metric`(返回0不训练)每步写 `extras['log']['fair_reward']`→ logger 记 `Mean episode fair_reward`;agent cfg `logger="wandb"` 已开,实测 wandb run 生成、fair 曲线在记。
 - **首个多序列长跑**:`WujiHand_Tracking_CubesmallMulti_Pinall3` 22000env+net v4 max10000 在 GPU6 跑着(2026-06-17)。待用户腾卡再加 Original/CGSmooth 两档并行对比。
 
