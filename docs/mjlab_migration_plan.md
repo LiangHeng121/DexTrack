@@ -187,7 +187,7 @@ wuji 厂商官方栈:wuji-mjlab(任务+部署)→ mjlab==1.3.0 → MuJoCo + mujo
 
 - **★ 单卡最大 env 数 = 26000(模拟器差异,非那两个数)**:OOM 信息显示 `PyTorch only 102MB allocated`——**76.97GB 几乎全是 mujoco-warp 每个 world 的固定状态**(qpos/qvel/xpos/contact 等,~2MB/env),不随 nconmax/njmax 走。把 96/512→64/256 砍小后 40000 仍在 **warp CUDA graph 创建 OOM**(78GB)。瓶颈是 warp 的 graph-launch 瞬时峰值(≈稳态+15GB)。实测:22000=55GB稳、**26000=70GB稳(可跑最大)**、30000=62GB稳态但 iter0 后 graph_launch 峰值 OOM、40000=graph创建 OOM。**DexTrack 单卡能 40000 是因为 PhysX 每 env 比 mujoco-warp 省 2-3×** —— 这是"只换模拟器"的硬代价,不是参数没调对。→ env 26000(而非40000)是被 mujoco-warp 单卡内存所迫的唯一额外偏差;nconmax/njmax 保持原 96/512(砍小救不了40000且未验证物理)。
 - **fair reward 进 wandb ✓**:`fair_reward_metric`(返回0不训练)每步写 `extras['log']['fair_reward']`→ logger 记 `Mean episode fair_reward`;agent cfg `logger="wandb"` 已开,实测 wandb run 生成、fair 曲线在记。
-- **首个多序列长跑**:`WujiHand_Tracking_CubesmallMulti_Pinall3` 22000env+net v4 max10000 在 GPU6 跑着(2026-06-17)。待用户腾卡再加 Original/CGSmooth 两档并行对比。
+- **三档多序列长跑(2026-06-17)**:`WujiHand_Tracking_CubesmallMulti_{Original,Pinall3,CGSmooth}` **各 27000 env**(单卡折中:26000=70GB稳/28000=77GB太贴边/27000=73GB留~7GB)+ net v4 + 对齐PPO,max10000,GPU3/4/6 各一档并行。fair_reward 进 wandb(config无关,三档横比)。起步 fair~-0.6(多序列pinall3早期)。
 
 ### ★ TODO(待办)
 - **cgsmooth 训更久**(可选):单序列三档都只 500iter;cgsmooth 9 项 reward 欠训,延到 1000-1500iter 才能量化 HAND_EMA/action_rate 的抖动↓收益。
