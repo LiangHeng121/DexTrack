@@ -172,8 +172,26 @@ wuji 厂商官方栈:wuji-mjlab(任务+部署)→ mjlab==1.3.0 → MuJoCo + mujo
   ```
   (R=Original/Pinall3/CGSmooth)。22000env 单档 ~62GB 适配一张 A100。
 
+### ★ DexTrack PPO 对齐审计(2026-06-17)
+对照 DexTrack wuji 多序列脚本 + `cfg/train/HumanoidPPOSupervised.yaml`,把 ppo.py 全部对齐(reward/模拟器之外):
+| 参数 | DexTrack | 旧 | 已改为 |
+|---|---|---|---|
+| 网络 | net_type v4 `[8192,4096,2048,1024,512,256,128]` | (512,256,128) | **v4**(actor+critic) |
+| learning_rate | 5e-4 adaptive(kl 0.008) | 1e-4 fixed | **5e-4 adaptive desired_kl0.008** |
+| horizon_length | 32 | 24 | **32** |
+| mini_epochs | 5 | 4 | **5** |
+| critic_coef | 4 | 0.5 | **4** |
+| clip_value | True | False | **True** |
+| entropy_coef | 0.0 | 0.001 | **0.0** |
+| gamma/lam/grad_norm/e_clip/minibatch数 | 0.99/0.95/1.0/0.2/32 | 同 | ✓ 本就对齐 |
+
+- **★ 40000 env 单卡装不下(模拟器差异)**:40000+net v4 **OOM 76.97GB**(第一次 PPO 更新时 minibatch=40000 过 net v4 反向 ~52GB + sim ~25GB);30000 也在 iter0 后 warp OOM(+别的用户挤占)。**DexTrack 40000+v4 几乎肯定多卡(脚本 nn_gpus)**;PhysX 接触内存也远比 mujoco-warp 省。单卡 mujoco-warp + net v4 的稳妥上限 ≈ **22000 env**(实测 55GB/留 25GB 余量)。→ env 数 22000 是被单卡内存所迫的唯一额外偏差。
+- **fair reward 进 wandb ✓**:`fair_reward_metric`(返回0不训练)每步写 `extras['log']['fair_reward']`→ logger 记 `Mean episode fair_reward`;agent cfg `logger="wandb"` 已开,实测 wandb run 生成、fair 曲线在记。
+- **首个多序列长跑**:`WujiHand_Tracking_CubesmallMulti_Pinall3` 22000env+net v4 max10000 在 GPU6 跑着(2026-06-17)。待用户腾卡再加 Original/CGSmooth 两档并行对比。
+
 ### ★ TODO(待办)
-- **cgsmooth 训更久**(可选):单序列三档都只 500iter;cgsmooth 9 项 reward 欠训,延到 1000-1500iter 才能量化 HAND_EMA/action_rate 的抖动↓收益(对照 DexTrack ep1000 抖↓28%)。多序列可直接训足。
+- **cgsmooth 训更久**(可选):单序列三档都只 500iter;cgsmooth 9 项 reward 欠训,延到 1000-1500iter 才能量化 HAND_EMA/action_rate 的抖动↓收益。
+- **多卡 40000 env**(可选):若要真正对齐 DexTrack 的 40000+v4,需上多卡(DDP);单卡 mujoco-warp 上限 ~22000。
 - **目标对齐 DexTrack**:除 reward 外尽量一致(只换模拟器)。动作 wdelta✅、obs full499✅、三档 reward 补丁✅(本次)、kp 为 MuJoCo 侧必要改动(见 kp 消融)。
 
 ### git / 协作基建(2026-06-16 搭好)
