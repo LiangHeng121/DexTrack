@@ -144,9 +144,27 @@ wuji 厂商官方栈:wuji-mjlab(任务+部署)→ mjlab==1.3.0 → MuJoCo + mujo
 - **含义**:kp 增大对**训练成功非必需**——策略能自补偿。kp×8 仅加速/稳定开环行为,不是「走捷径」(forcerange 没改、力仍受真实电机上限)。
 - **待用户定**:默认 kp 是否从 ×8 降?选项:×1(最贴厂商 sim2real,训练已证可行)/ ×5(开环最优,折中)/ 保持 ×8(当前默认,已验证)。我未自动改默认。仍需核对真手 wuji 控制器 kp/带宽规格作 sim2real 参照。
 
+### ★ 三档 reward 定量对比(2026-06-17, kp×1 + wdelta, 各 500 iter)
+忠实移植 cgsmooth/B2/softclip 三补丁后,对比原始/pinall3/cgsmooth_B2_softclip(任务 `WujiHand_Tracking_Cubesmall_Cmp_{Original,Pinall3,CGSmooth}`,只 reward 不同)。离线 eval `dextrack_tools/eval_reward_cmp.py`(64env×300步,fair=canonical base config无关指标)。
+
+| 指标 | 原始(base) | pinall3 | cgsmooth_B2_softclip |
+|---|---|---|---|
+| **fair reward** | −27.9 | **237.6** | 213.4 (−10%) |
+| max_z(m)/举升 | 0.042 ❌不举 | 0.408 ✓ | 0.409 ✓ |
+| obj 跟踪(mm) | 188.6 | **2.0** | 3.0 |
+| 抖动 jitter | 0.021 | **0.018** | 0.027 |
+| 指误差(rad) | 0.365 | **0.206** | 0.720 |
+| palm 误差(cm) | 12.2 | **0.46** | 0.72 |
+| 接触距离(cm) | 10.9 | 1.14 | **0.86** |
+
+- **★ 原始 base reward 在 kp×1 下举不起来**(max_z 4cm、fair −28、物体偏 19cm)。没有稠密 FINGER_POS/PALM_POS 跟踪,策略陷在"贴着地面物体悬停"局部最优、不敢提交举升。**这正是 pinall3 存在的理由**(稠密指尖/掌位置跟踪 bootstrap 抓握)。注:训练时 bonus 18 是地面接触刷的门控 bonus,非真举起。
+- **pinall3 = 500iter 最优**:举升 0.408、2mm 物体跟踪、指误差最低 0.206、palm 0.46cm、抖动最低。复刻 DexTrack "pinall 赢家"。
+- **cgsmooth_B2_softclip**:也举起、fair 213(−10%,符合 DexTrack "平滑换约 11% fair")、**接触距离最紧 0.86cm → contact_guide(B2)确实把手指拉到接触点**。**但** 500iter 下指误差/抖动反而更高(0.72/0.027)——9 项 reward 比 6/4 项收敛慢、欠训;HAND_EMA 滞后也松了手指(DexTrack 同观察 finger 1.74→2.14)。**DexTrack 的抖动↓28% 是 ep1000 才显现**,500iter 看不到平滑收益。
+- **结论**:① 原始 reward 不可用(不举);② pinall3 是当前最稳选择;③ cgsmooth 的 B2 接触收紧已验证有效,但平滑收益需训到 ~1000-1500iter 才显现(待选做)。
+
 ### ★ TODO(待办)
-- **reward 补丁**: 仍未加 cgsmooth/B2-contact/softclip/idle(以后按需加)。
-- **目标对齐 DexTrack**:除 reward 外尽量一致(只换模拟器)。动作 wdelta 已对齐(开关#16);**obs 正在对齐**;kp 为 MuJoCo 侧必要改动(见上 TODO)。
+- **cgsmooth 训更久**(可选):三档都只 500iter;cgsmooth 9 项 reward 欠训,延到 1000-1500iter 才能量化 HAND_EMA/action_rate 的抖动↓收益(对照 DexTrack ep1000 抖↓28%)。
+- **目标对齐 DexTrack**:除 reward 外尽量一致(只换模拟器)。动作 wdelta✅、obs full499✅、三档 reward 补丁✅(本次)、kp 为 MuJoCo 侧必要改动(见 kp 消融)。
 
 ### git / 协作基建(2026-06-16 搭好)
 - **fork**:`https://github.com/LiangHeng121/wuji-mjlab`(公开 fork 自 `wuji-technology/wuji-mjlab`)。
