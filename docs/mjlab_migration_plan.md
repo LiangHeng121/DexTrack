@@ -189,6 +189,56 @@ wuji 厂商官方栈:wuji-mjlab(任务+部署)→ mjlab==1.3.0 → MuJoCo + mujo
 - **fair reward 进 wandb ✓**:`fair_reward_metric`(返回0不训练)每步写 `extras['log']['fair_reward']`→ logger 记 `Mean episode fair_reward`;agent cfg `logger="wandb"` 已开,实测 wandb run 生成、fair 曲线在记。
 - **三档多序列长跑(2026-06-17)**:`WujiHand_Tracking_CubesmallMulti_{Original,Pinall3,CGSmooth}` **各 27000 env**(单卡折中:26000=70GB稳/28000=77GB太贴边/27000=73GB留~7GB)+ net v4 + 对齐PPO,max10000,GPU3/4/6 各一档并行。fair_reward 进 wandb(config无关,三档横比)。起步 fair~-0.6(多序列pinall3早期)。
 
+### ★★ 三档多序列泛化对比(2026-06-18, iter~1700 中间态)
+全 23 条 cubesmall 序列(无offhand)逐条离线 rollout,每条 episode-累加 `object_inplace_bonus`(满分300,统一定义 grip0.22/5指,三档可比)。工具 `dextrack_tools/eval_bonus_per_seq.py`(`ALL_SEQS=1`)。
+
+**汇总(满分300):**
+| policy | 均值 bonus | 最佳序列数 | 失败(<50%) |
+|---|---|---|---|
+| Original | 213.5 | 4/23 | 5 |
+| Pinall3 | 257.8 | 8/23 | 4 |
+| **CGSmooth** | **279.2** | **11/23** | **0 ✅** |
+
+**结论:CGSmooth 是最稳的 generalist** —— 均值最高、最佳序列最多、**零失败**(23条全≥65%);Pinall3 失败4条、Original 失败5条。稠密跟踪项(pinall3)是多序列泛化的关键(Original 在高举升序列频繁失败);contact_guide(B2)+平滑(CGSmooth)进一步把别档失败的难序列救活。
+
+**全 23 序列 bonus(hold%):**
+| 序列 | Original | Pinall3 | CGSmooth |
+|---|---|---|---|
+| s10 inspect_1 | 49(16%) | 283(94%) | 285(95%) |
+| s10 lift | 189(63%) | 290(97%) | 289(96%) |
+| s10 pass_1 | 285(95%) | 288(96%) | 284(95%) |
+| s1 inspect_1 | 82(27%) | 80(27%) | **284(95%)** |
+| s1 lift | 221(74%) | 289(96%) | 290(97%) |
+| s1 pass_1 | 292(97%) | 289(96%) | 290(97%) |
+| s2 inspect_1 | 290(96%) | 288(96%) | 289(96%) |
+| s2 lift | 265(88%) | 294(98%) | 294(98%) |
+| s2 pass_1 | 286(95%) | 281(94%) | 283(94%) |
+| s3 inspect_1 | 286(95%) | 284(95%) | 285(95%) |
+| s4 pass_1 | 278(93%) | 275(91%) | 279(93%) |
+| s5 inspect_1 | 58(19%) | 291(97%) | 287(96%) |
+| s5 lift | 181(60%) | 292(97%) | 289(96%) |
+| s5 pass_1 | 112(37%) | 139(46%) | **277(92%)** |
+| s6 inspect_1 | 158(53%) | 283(94%) | 285(95%) |
+| s6 lift | 180(60%) | 286(95%) | 285(95%) |
+| s6 pass_1 | 283(94%) | 287(96%) | 286(95%) |
+| s7 pass_1 | 284(95%) | 285(95%) | 284(95%) |
+| s8 inspect_1 | 286(95%) | 290(97%) | 290(97%) |
+| s8 lift | 226(75%) | 259(86%) | **293(98%)** |
+| s8 pass_1 | 131(44%) | 139(46%) | 195(65%) |
+| s9 inspect_1 | 289(96%) | 289(96%) | 288(96%) |
+| s9 pass_1 | 204(68%) | 150(50%) | 209(70%) |
+
+**对比视频**(三宫格 左→右 = Original|Pinall3|CGSmooth,工具 `dextrack_tools/render_compare.py`):
+- `mjlab_cmp_ori_grab_s1_cubesmall_inspect_1.mp4` —— ★Ori&Pin 都抓不住(27%),仅 CG 成功(95%)
+- `mjlab_cmp_ori_grab_s5_cubesmall_pass_1.mp4` —— Ori&Pin 失败(37/46%),CG 成功(92%)
+- `mjlab_cmp_ori_grab_s5_cubesmall_inspect_1.mp4` —— Original 失败(19%),Pin/CG 举起
+- `mjlab_cmp_ori_grab_s9_cubesmall_pass_1.mp4` —— Pinall3 失败(50%),Ori/CG ~70%
+- `mjlab_cmp_ori_grab_s8_cubesmall_pass_1.mp4` —— 三档都难(放手),CG 最高(65 vs 46/44)
+- `mjlab_cmp_ori_grab_s8_cubesmall_lift.mp4` —— 都举起,CG 最干净(98% vs 86/75)
+- 单档多序列: `mjlab_cgsmooth_<seq>.mp4`(CG 在6条上 z误差1-6mm); `render_multi_seqs.py` 锁定任意序列渲染。
+
+⚠️ 以上均为 **iter~1700 中间态**(三档仍在跑/会继续涨);待收敛重测终态 + 量化指误差/抖动(CGSmooth 平滑优势未量化)。
+
 ### ★ TODO(待办)
 - **cgsmooth 训更久**(可选):单序列三档都只 500iter;cgsmooth 9 项 reward 欠训,延到 1000-1500iter 才能量化 HAND_EMA/action_rate 的抖动↓收益。
 - **多卡 40000 env**(可选):若要真正对齐 DexTrack 的 40000+v4,需上多卡(DDP);单卡 mujoco-warp 上限 ~22000。
