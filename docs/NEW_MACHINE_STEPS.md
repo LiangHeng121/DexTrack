@@ -47,6 +47,28 @@ ls ../isaacgymenvs/data/GRAB_Tracking_PK_WUJI_FPOS_v1/data | head     # WUJI 参
 CUDA_VISIBLE_DEVICES=0 pixi run train --task WujiHand_Tracking_3Obj_CGSmooth_Contact --env.scene.num-envs 8000
 ```
 
+## D. 环境迁移
+
+**mjlab/pixi(活跃工作,必需)** —— 无需迁移,`migrate_install.sh` 里的 `pixi install` 从
+`pixi.lock` 精确重建。✅ 自动完成。
+
+**conda(Isaac Gym 侧,可选;只做 mjlab 不需要)** —— 用 conda-pack 打包好放在 HF,解包即用:
+```bash
+# dextrack (py3.8, Isaac Gym 主环境)
+hf download liang12121/dextrack-wuji-mjlab-assets conda_packs/dextrack_env.tar.gz --repo-type dataset --local-dir /tmp
+mkdir -p ~/miniconda3/envs/dextrack
+tar -xzf /tmp/conda_packs/dextrack_env.tar.gz -C ~/miniconda3/envs/dextrack
+~/miniconda3/envs/dextrack/bin/conda-unpack          # 修复绝对路径(必做)
+# wuji-retarget (py3.10, GRAB→wuji 重定向)
+hf download liang12121/dextrack-wuji-mjlab-assets conda_packs/wuji-retarget_env.tar.gz --repo-type dataset --local-dir /tmp
+mkdir -p ~/miniconda3/envs/wuji-retarget
+tar -xzf /tmp/conda_packs/wuji-retarget_env.tar.gz -C ~/miniconda3/envs/wuji-retarget
+~/miniconda3/envs/wuji-retarget/bin/conda-unpack
+```
+- `isaacgym/` 源码随 HF 一起下到 `$DEXTRACK_ROOT/isaacgym`(dextrack env 的 `-e` 安装指向它,通常无需重装)。
+- **libpython3.8 钩子**:`conda activate dextrack` 若报 `libpython3.8.so` 缺失,见 `MIGRATION_HANDOFF.md` §3.1(加 conda activate.d 钩子把 `$CONDA_PREFIX/lib` 进 `LD_LIBRARY_PATH`)。
+- conda-pack 是相对当前用户路径打的;新机 miniconda 路径不同也没事(`conda-unpack` 会修)。
+
 ## 备注
 - HF 数据集(私有):`liang12121/dextrack-wuji-mjlab-assets`,镜像 DEXTRACK_ROOT 相对路径。
 - 凭证全在私有 HF 的 `SETUP_SECRETS.md`(wandb/GitHub token + 用法),公开仓不放 token。
