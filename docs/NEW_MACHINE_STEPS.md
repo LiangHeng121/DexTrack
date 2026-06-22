@@ -10,7 +10,13 @@
 export DEXTRACK_ROOT=/home/liangh/DexTrack
 
 # 1. 装 hf CLI(git 一般已有)
-pip install -U "huggingface_hub[cli,hf_xet]"
+#    若系统 python 报 externally-managed-environment(PEP 668,Debian/Ubuntu 常见),
+#    用独立 venv(推荐,不碰系统 python):
+python3 -m venv ~/.venvs/hf
+~/.venvs/hf/bin/pip install -U "huggingface_hub[cli,hf_xet]"
+export PATH="$HOME/.venvs/hf/bin:$PATH"
+echo 'export PATH="$HOME/.venvs/hf/bin:$PATH"' >> ~/.bashrc
+#    (或一行图快: pip install --break-system-packages -U "huggingface_hub[cli,hf_xet]")
 
 # 2. HF 登录(token 见迁移交接对话 / HF 账号 Settings→Access Tokens;公开仓不放 token)
 hf auth login --token <你的_HF_TOKEN>
