@@ -18,6 +18,11 @@ CUDA_VISIBLE_DEVICES=0 pixi run train --task WujiHand_Tracking_3Obj_CGSmooth_Con
 ```
 - **代码**:`wuji-mjlab/`(自己的 fork,分支 `dextrack-tracking`;**不要把它提交进 DexTrack 主仓**,是独立 git 仓)。
 - **数据/ckpt 在 HF**:`liang12121/dextrack-wuji-mjlab-assets`(私有 dataset,需 `hf auth login`)。
+- **🔑 凭证(HF/wandb/GitHub token)**:**不在本仓**(DexTrack/wuji-mjlab 都是公开仓,token 不能进)。token 全部放在**私有 HF 数据集里的 `SETUP_SECRETS.md`**。接入步骤:
+  1. 先用 **HF token** 登录(bootstrap;token 见迁移交接对话,或 HF 账号 Settings→Access Tokens):`hf auth login`
+  2. 下载凭证:`hf download liang12121/dextrack-wuji-mjlab-assets SETUP_SECRETS.md --repo-type dataset --local-dir .`
+  3. 按 `SETUP_SECRETS.md` 里命令配好 wandb / GitHub(`migrate_install.sh` 也会顺带拉下来)。
+  > token 若担心泄露,迁移后在 HF/wandb/GitHub 各**轮换(regenerate)**一次。
 - 渲染需 `MUJOCO_GL=egl PYOPENGL_PLATFORM=egl`。
 - **不要 pip 装进 pixi env**(要加包改 `pixi.toml`)。
 
