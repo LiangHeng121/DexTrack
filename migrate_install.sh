@@ -39,13 +39,16 @@ if ! hf auth whoami >/dev/null 2>&1; then
   echo "!! 需要 HF 登录: 运行 'hf auth login' 或 export HF_TOKEN=hf_xxx 后重跑"; exit 1
 fi
 
-# 4. 从 HF 拉数据 + ckpt,rsync 进 DEXTRACK_ROOT(HF 仓结构镜像了 root 相对路径)
+# 4. 从 HF 拉全部数据/ckpt/视频,rsync 进 DEXTRACK_ROOT(HF 仓结构镜像了 root 相对路径)
+#    HF 含:isaacgymenvs/{data,logs,logs_test,ckpts,render_videos} assets GRAB wuji
+#         retargeting wuji_pipeline whls report_videos render_videos wuji-mjlab/logs
 STAGE="$(mktemp -d)"
-echo "==> 从 HF 下载 assets(~95MB 数据 + ~44GB ckpt,较久)..."
+echo "==> 从 HF 下载全部 assets(数据+ckpt+视频,共 ~135GB,很久;断点续传可重跑)..."
 hf download "$HF_REPO" --repo-type dataset --local-dir "$STAGE"
-echo "==> rsync 数据 -> $DEXTRACK_ROOT"
-rsync -a "$STAGE/isaacgymenvs" "$STAGE/assets" "$STAGE/GRAB" "$DEXTRACK_ROOT/"
-[ -d "$STAGE/wuji-mjlab/logs" ] && rsync -a "$STAGE/wuji-mjlab/logs" "$DEXTRACK_ROOT/wuji-mjlab/"
+echo "==> rsync 进 $DEXTRACK_ROOT(排除 HF 仓元文件)"
+rsync -a --exclude='README.md' --exclude='migrate_install.sh' \
+      --exclude='.gitattributes' --exclude='.cache' \
+      "$STAGE/" "$DEXTRACK_ROOT/"   # wuji-mjlab/logs 会落进已克隆的 wuji-mjlab/
 rm -rf "$STAGE"
 
 # 5. 路径自适配:代码硬编码 /home/liangh/DexTrack(env_cfgs.py + grab_object_cfg.py)
