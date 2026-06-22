@@ -239,7 +239,40 @@ wuji 厂商官方栈:wuji-mjlab(任务+部署)→ mjlab==1.3.0 → MuJoCo + mujo
 
 ⚠️ 以上均为 **iter~1700 中间态**(三档仍在跑/会继续涨);待收敛重测终态 + 量化指误差/抖动(CGSmooth 平滑优势未量化)。
 
+### ★★ 接触门控 + 多物体 generalist(2026-06-21,关键结果)
+**动机**:距离 flag(finger_dist≤0.6 且 palm_dist≤0.22)在低位参考帧会对**趴地板悬停**误触发 → 策略趴地刷 fair(cup fair 112 却不举)。改用**真实接触门控**:`n_finger_contacts(读 mujoco-warp 接触对,≥2 指真碰物体)` 整体替换 `flag==2`,门控 `object_pos_tracking` + `object_inplace_bonus`(distance shaping/finger_obj 不变,仍给接近梯度)。reward_mode 加 `_contact` 后缀触发(`rewards._grasp_gate`)。**fair_reward_metric 也改成接触门控**(commit `69d4e4d`,去掉"没接触白给 bonus")。
+
+**6 个 run 从头训**(全 `cgsmooth_b2_softclip_contact`,kp×1,save_interval250):cubesmall/cup/apple 多序列 + 3obj + cup/apple 单序列(`only_seq`)。
+
+**判据修正**:用 **max_z vs 参考峰 ref**(`✓`=mz≥ref−0.05)判"跟上",**不用绝对 0.2 阈值**——很多 lift 参考本身只举到 0.1-0.13,绝对阈值会把"参考低但跟得准"误判为失败。
+
+**成功率(逐条 lift 序列离线 rollout,max_z 对比 ref):**
+| run | 物体 | n/m | 备注 |
+|---|---|---|---|
+| cubesmall 多 | cube | **6/6** | 全中 |
+| cup 多 | cup | **6/8** | s8/s9 没举 |
+| apple 多 | apple | **0/8**(+1部分) | 全趴地 |
+| **3obj** | cube | **6/6** | |
+| **3obj** | cup | **7/8** | 仅 s9 失败(比 cup专项还多1) |
+| **3obj** | apple | **3/8**(+1) | s2/s4/s9 举起(专项0/8) |
+| cup 单(s8) | cup | 1/1 | 0.243/0.28 |
+| apple 单(s2) | apple | 0/1 | 0.064,没举 |
+
+**★ 关键结论:3obj 多物体 generalist 在每个物体上都 ≥ 对应单物体专项**(cube 6/6=6/6、**cup 7/8>6/8**、**apple 3/8>0/8**)。多物体迁移逼真:学会抓轻 cube/cup 的抓法迁移到重 apple。**apple 用 kp×1 完全能举(3obj 证明),不需加 kp**;apple 专项失败不是抓力/训练量问题(它总样本 3.2B > 3obj 2.56B 反而更多)——是**缺多物体迁移**。→ **主推多物体 generalist 路线,放弃单物体/单序列专项。**
+
+**iter≠训练量(回答"3obj 为何训这么快")**:3obj 8000env→13s/iter→跑到 9999;专项 20-24k env→28-33s/iter→才 ~4500。但**总样本**(iter×env×32):3obj 2.56B < cup 3.28B < apple 3.18B < cube 3.59B。env 数当初按填满显存设,非学习最优(8000env iter 快但每步样本少梯度噪)。
+
+**⚠ eval/render 工具 bug(已修,影响 3obj 数据)**:锁序列的 `_resample_command` monkeypatch **只写激活物体、忘 park 非激活的**→3obj 里 cup/apple 堆在手边(x≈0.06/0.17 而非 x=12/14)→污染:cube"抛飞 0.89"实为**撞旁边物体弹飞**。修复(park 非激活,`_park[j]` pos+单位quat)后 cube 干净 **6/6 跟踪不再抛飞**,apple s2 从 0.152→**0.397**。**训练不受影响**(真 `_resample_command` 会 park);单物体 eval 不受影响(只 1 物体)。
+
+**⚠ 磁盘满根因(已修,曾误判外部kill)**:net-v4 ckpt ~0.2-1.2GB × `save_interval=50` × 多 run → `logs/rsl_rl/wuji_tracking` 攒到 **630GB 填满 3.6T 盘** → 训练写不进 ckpt → **所有 job 同时崩**(看似定点外部 kill)。修:`save_interval 50→250` + 清中间 ckpt(每 run 留最新,一次释放 640GB)。**再遇全崩先 `df -h`**。
+
+**视频**(每帧标 z;`/home/liangh/DexTrack/mjlab_ct_*` / `mjlab_3obj_*FIXED`):
+- `ct_cup_s6_GOOD`(cup 举 0.47) vs `ct_apple_s2_FAIL`(apple 专项趴地) —— 同 kp×1,cup 举得起 apple 举不起。
+- `3obj_apple_s2_GOOD`(generalist 把 324g apple 举到 0.40) —— 对比专项 0.064,迁移威力。
+- `3obj_cube_FIXED`(park 后 cube 干净跟踪) —— 对照污染版的抛飞。
+
 ### ★ TODO(待办)
+- **扩多物体 generalist**(主线):3obj(cube+cup+apple)已验证 generalist≥专项;下一步加更多物体 / 让 3obj 多训(现仅 2.56B 样本就 16/22)。**apple 不用加 kp**。
 - **cgsmooth 训更久**(可选):单序列三档都只 500iter;cgsmooth 9 项 reward 欠训,延到 1000-1500iter 才能量化 HAND_EMA/action_rate 的抖动↓收益。
 - **多卡 40000 env**(可选):若要真正对齐 DexTrack 的 40000+v4,需上多卡(DDP);单卡 mujoco-warp 上限 ~22000。
 - **目标对齐 DexTrack**:除 reward 外尽量一致(只换模拟器)。动作 wdelta✅、obs full499✅、三档 reward 补丁✅(本次)、kp 为 MuJoCo 侧必要改动(见 kp 消融)。
