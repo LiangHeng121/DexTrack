@@ -45,10 +45,18 @@ fi
 STAGE="$(mktemp -d)"
 echo "==> 从 HF 下载全部 assets(数据+ckpt+视频,共 ~135GB,很久;断点续传可重跑)..."
 hf download "$HF_REPO" --repo-type dataset --local-dir "$STAGE"
-echo "==> rsync 进 $DEXTRACK_ROOT(排除 HF 仓元文件)"
+echo "==> rsync 个体文件目录 -> $DEXTRACK_ROOT(排除 HF 元文件/tarball/conda)"
 rsync -a --exclude='README.md' --exclude='migrate_install.sh' \
-      --exclude='.gitattributes' --exclude='.cache' \
+      --exclude='.gitattributes' --exclude='.cache' --exclude='SETUP_SECRETS.md' \
+      --exclude='data_tars' --exclude='conda_packs' \
       "$STAGE/" "$DEXTRACK_ROOT/"   # wuji-mjlab/logs 会落进已克隆的 wuji-mjlab/
+# assets + isaacgymenvs/data 文件数太多(被HF限流)改打 tarball,解开到位:
+for t in assets isaacgymenvs_data; do
+  if [ -f "$STAGE/data_tars/$t.tar" ]; then
+    echo "==> 解开 data_tars/$t.tar -> $DEXTRACK_ROOT"
+    tar -xf "$STAGE/data_tars/$t.tar" -C "$DEXTRACK_ROOT/"
+  fi
+done
 rm -rf "$STAGE"
 
 # 5. 路径自适配:代码硬编码 /home/liangh/DexTrack(env_cfgs.py + grab_object_cfg.py)
