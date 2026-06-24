@@ -115,3 +115,7 @@ retargeting/
 wuji_pipeline/out/fpos_npz/
 spider/
 wuji-mjlab/
+
+# HF 迁移带入的打包 tar(12.7GB, 解压目录已就位, 此为冗余归档)
+data_tars/
+*.tar
