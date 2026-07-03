@@ -404,3 +404,25 @@ wuji 厂商官方栈:wuji-mjlab(任务+部署)→ mjlab==1.3.0 → MuJoCo + mujo
 - **mjlab 动作模板**:`JointPositionOffsetEMAAction`(`target=default_pos+action·scale`+EMA+warmup)≈ 我们的累积残差,把 `default_pos` 换成 `ref_qpos[t]` 即可。
 - **reorient PPO 规模**:8192 env × 5000 iter;单序列 tracking 可少。注册走 `register_mjlab_task` + `WujiOnPolicyRunner`。
 - **★ mjlab 自带可参考任务**(`pixi run list-envs` 发现):`Mjlab-Tracking-Flat-Unitree-G1`(人形逐帧轨迹跟踪 = command-term 范式,比 reorient 更贴 tracking)、`Mjlab-Lift-Cube-Yam`(举升 reward 范式)。建 command/reward term 时优先参考这俩。
+
+### ★ specialist→generalist 在线蒸馏(可 scale 架构, 2026-07-03 规格)
+**目标**:DexTrack 的 specialist→generalist,但**避开"多物体单实例"**(park/swap 都 scale 不了几百物体)。
+**核心架构 = 多单物体实例 + 共享 student**:
+- 每物体一个**纯单物体**仿真实例(mujoco-warp 快路径、能上大 env、无 park/swap 开销);student 是一个共享权重网络,在 N 个实例各跑 rollout,各自被对应老师标注,经验在 batch 维拼接喂一个 PPO+BC 更新。
+- 多物体性在**网络**里(一个 net 吃所有物体经验,靠 256-d obj latent 区分),不在仿真里 → scale 到几百物体 = 每轮抽 k 个物体各开单实例轮转(天然 curriculum),不往一个仿真塞几百 mesh。
+- DAgger 风格(student 探索的 state、老师在线标注),非离线 BC。
+**关键代码事实**(已核实):
+- rsl_rl 是 **in-tree 可编辑源码** `src/wuji_rl_libs/rsl_rl/rsl_rl/`(非只读包!),learn 循环 `runners/on_policy_runner.py:79-98`(act→step→process_env_step),PPO update `algorithms/ppo.py:215-306`(surrogate/value loss)。**BC 损失直接加在 ppo.py:update**。
+- VecEnv 契约 = `mjlab/rl/vecenv_wrapper.py`:num_envs/num_actions/device/max_episode_length/get_observations()→TensorDict/reset()/step(actions)→(obs,rew,dones,extras)。
+**三块实现**:① MultiVecEnv 适配器(新文件~150行):持 N 个单物体 RslRlVecEnvWrapper,对外一个 VecEnv,batch 维 cat,暴露 env_teacher_id 路由张量。② 老师标注+BC(改 in-tree rsl_rl~80行):runner 载 3 冻结 specialist,rollout 存 teacher_actions,ppo update 加 `bc_loss=supervised_coef×MSE(student_mean,teacher)`,**默认 coef=0(开关)**。③ 注册 distillation task(小):3 单物体 env_cfg + teacher ckpt 路径 + coef。
+**第一步验证**:3 老师(cube 6/6+cup 6/8+apple 0/8 全纳入),student 从零,验收=管线正确(student 复现老师水平)。**注意天花板**:现有 specialist 都 ≤ 3obj(16/22),纯蒸馏不指望超基线;近期价值=跑通 BC/DAgger 基建,等 apple 消融出好老师再战。
+
+### ★ 待办:多实例纯 PPO 3obj(coef=0, MultiVecEnv 跑通后)
+MultiVecEnv 适配器是共用地基:配 BC 损失=蒸馏(需老师);**supervised_coef=0=纯 PPO 多实例 generalist(无老师)**,即 park 3obj 的正统升级——3 个单物体实例(cube/cup/apple)喂一个共享 student,每实例快路径、能上各自单卡上限(24000/20000/22000)、无 park/swap 开销、无 eval 污染。
+**待办(蒸馏管线跑通 + 有空闲卡后)**:跑 coef=0 多实例 3obj,对比 park 3obj(16/22),验证多实例(网络层迁移)能否 ≥ park(同环境迁移)。若 ≥,则 park/swap 都可退休,"多物体训练"统一走"多单物体实例+共享网络",直接 scale 到几百物体(抽 k 个物体轮转)。
+**未知**:park 的 apple 3/8 靠"同环境多物体迁移",多实例靠"网络层迁移",是否等效需实测。
+
+### 当前进行中(2026-07-03,会话末快照)
+- **apple 消融 9 实验**:5 起训(GPU5=MassCur/6=R123/0=R1/1=R2/7=R3,8000env/10000iter,~32h),队列脚本 PID 3906539 盯着腾卡续 RSI→ET→Noise→Friction。日志 /tmp/wuji_ap_*.log。**smoke early signal:R1 ungated 8/8 vs gated 0/8(逃生门=病灶)**。全开关默认关、现有 task 未变。**未 commit**。
+- **蒸馏管线**:fork 在 GPU3 实现 MultiVecEnv+BC(改 in-tree rsl_rl,规格见上上节)。**未 commit**。
+- 待评估:apple 消融 ~5000iter 中途 max_z(工具 eval_apple_maxz.py)。

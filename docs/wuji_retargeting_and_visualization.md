@@ -95,6 +95,39 @@ conda run -n dextrack       python wuji_pipeline/assemble_fpos_reference.py    #
 
 ---
 
+## 一·补、TopoRetarget 重定向（2026-07-03 新方法，替代上节步 1+2+3）
+
+上节的 keypoint retargeter（DexPilot 式，匹配指尖/关节**绝对位置**）有个硬伤：**目标里没有物体，接触漂移+穿透严重**（FPOS apple 拇指戳穿 ~16mm、小指无名指悬空不接触）。**TopoRetarget**（清华 IIIS，CoRL 2026 投稿，仓库 `wuji_retarget_pen_min/`，私有 fork https://github.com/LiangHeng121/wuji_retarget_pen_min）是**保接触结构**的重定向：把「手关键点+物体表面采样点」建成交互图，匹配图的**微分（Laplacian）结构**（距离指数加权，近接触点权重大），穿透作为 SQP 硬/软约束。实测 apple s2 穿透 **16mm→1.1mm（一个数量级）**，接触精度/朝向也更好。方法细节见 `wuji_retarget_pen_min/paper/example.tex`。
+
+### 与老管线的关键区别
+- **老 keypoint retargeter 只出 finger 20 关节角、不出 wrist**；FPOS 的 wrist 6-DOF 是步2 assemble 接轨迹 + 步3 `rederive_wuji_global.py` 用 **Kabsch 从关键点重算**的（Kabsch rederive 是"老方法不出 wrist"的补丁）。
+- **TopoRetarget 端到端优化 wrist+finger，输出完整协调的 26-DOF**，低穿透是 wrist+finger 一起满足非穿透约束的结果。→ **必须整套用 TopoRetarget 自己的 26-DOF，不走 Kabsch rederive**（拿它 finger 另算 wrist 会破坏手-物关系、丢穿透优势）。**TopoRetarget 一步替代老管线步 1+2+3**。
+- **输入格式**：TopoRetarget 吃 HO-Cap schema（`mediapipe_r_world(T,21,3)` MediaPipe 序 + `wrist_t/q_r`(wxyz) + `object_t/q` + 物体 mesh）。我们 GRAB→该格式的转换器 = `wuji_pipeline/grab_to_hocap.py`（PoC 写的）。**MANO→MediaPipe 关键点顺序无需重排**（manopth 输出已是 thumb-first=MediaPipe 序，`grab_to_mano_keypoints.py` 注释"MANO order"是标错的）。
+- **目标手 WH110 = 我们的 fly 手**（同物理手，20 指 DOF + 6 腕，顺序一致），输出 qpos **1:1 直接用，无需重映射**。
+
+### TopoRetarget 数据生成管线（GRAB → TOPO 参考，逐序列）
+| 步 | 脚本/操作 | 说明 |
+|---|---|---|
+| 0 | `grab_to_mano_keypoints.py` | GRAB → 21 关键点（复用老管线步0） |
+| crop | `assemble_wuji_reference.py` 的 `fit_crop` | **逐序列拟合**（对齐 allegro 参考 `GRAB_Tracking_PK_reduced_300` 物体角速度），得 [c0,c1]；`grab_idx=linspace(c0,c1-1,300)`。**不可硬编码**（apple s2=[160,459]，各序列不同）。这就是老管线接触生成用的同一套帧映射（本 doc §二·补 L150）。 |
+| canonical | Umeyama(GRAB 物体, allegro 参考物体) | 得相似变换 (s≈**1.2557**, R, t)。**关键：在 canonical 尺度下重定向**（用缩放后关键点），不是 ×1 重定向再放大（会破坏固定尺寸手的抓握）。**注**：这个 1.2557 是 Umeyama 从 allegro canonical 参考**实测**的真实尺度（那批参考定死的），≈ 老管线人为手写的 `--scale 1.25` 但更精确。老管线关键点放大(×1.25)与物体 canonical 尺度(×1.2557)本就差 0.5%、无人在意（抓握孔径对 0.5% 不敏感）；TopoRetarget 端到端在 canonical frame 做 mm 级穿透查询，**必须用精确的 1.2557 才能和已有 canonical 数据（allegro 参考/FPOS 物体轨迹）严丝合缝对齐**——用 1.2557 是消除误差、不是引入误差。 |
+| 转格式 | `grab_to_hocap.py`（--grab-idx-start/end/--canon-sim/--object-ref-npy） | GRAB 按 grab_idx 取 300 帧 + canonical 变换 → ×1.25 HO-Cap clip |
+| retarget | `hand_retarget.io.hocap_export`（wuji_retarget_pen_min pixi env，headless，MUJOCO_GL=egl，~70fps） | → `motion.npz`（Topo 完整 26-DOF + contact_mask + phi_mm，canonical frame，无 Kabsch） |
+| assemble | `assemble_topo_train_ref.py`（PoC 写的） | motion.npz → 训练 .npy：Topo wrist(intrinsic-XYZ euler)+20 finger → `robot_delta_states_weights_np(300,26)`；object 从对应 FPOS 复制；`link_key_to_link_pos` 从 export FK |
+| B2 接触 | `generate_contact_guidance_grab2.py` | **用 TOPO 自己的 link_key 重生成**（不能复用 FPOS 的——指尖位置不同）；同一 crop 帧对齐；→ `contact_grab2/<tag>_contact.npy` |
+
+**产出**（no-offset，与 FPOS_v1 同结构）：`GRAB_Tracking_PK_WUJI_TOPO_v1/{data/<tag>.npy, contact_grab2/<tag>_contact.npy}`。
+
+### 逐序列硬验证门槛（防 crop/约定回归，不过不入库）
+- **wrist 朝向**（最关键，防 euler 约定 bug）：Topo vs FPOS 逐帧朝向差**中位 <20°** 且相对变化**相关性 >0.9**（scipy `Rotation`，**intrinsic 'XYZ'** 大写，quat wxyz→xyzw）。apple s2 实测中位 14°、corr 0.98=正常。⚠ 我们 26-DOF 的 wrist rot 是 intrinsic XYZ 喂关节链，Topo quat→euler 若用错 extrinsic 'xyz' 会差最多 179°（`MIGRATION_HANDOFF.md` 记的坑）。**crop 错也会让朝向差爆掉**（apple s2 用错 crop [140,664] 时朝向 corr −0.01=假象）。
+- **穿透**：Topo 侧最大 ~1-2mm（mujoco mj_geomDistance）。
+- 无 NaN、qpos 在限位、300 帧。
+
+### 对比视频
+`mjlab_topo_vs_fpos_apple_s2_refstyle.mp4`（cmp3 reference 风格：真 ManagerBasedRlEnv 回放、参考原生 env-local 坐标系、物体真实举起、固定相机、每帧标 z+穿透）。峰值帧 91：两栏 apple 同步 z=0.40，FPOS 穿透 16.7mm vs Topo 1.1mm。手朝向差 ~14°=真实的 Kabsch-wrist vs SQP-wrist 差异。工具 `render_refstyle_topo_vs_fpos.py`。
+
+---
+
 ## 二、offset / no-offset 与命名约定
 
 **默认（无后缀）= 不带 offset（no-offset）；带 offset 的加 `_offset` 后缀。**
