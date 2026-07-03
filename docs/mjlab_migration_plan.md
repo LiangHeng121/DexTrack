@@ -271,6 +271,114 @@ wuji 厂商官方栈:wuji-mjlab(任务+部署)→ mjlab==1.3.0 → MuJoCo + mujo
 - `3obj_apple_s2_GOOD`(generalist 把 324g apple 举到 0.40) —— 对比专项 0.064,迁移威力。
 - `3obj_cube_FIXED`(park 后 cube 干净跟踪) —— 对照污染版的抛飞。
 
+### ★★ env/kp 消融实验(2026-06-24 启动,3 个并行)
+回答三个隔离问题:apple 专项失败是 env 数太多还是缺多物体迁移?加 kp 对 apple 有用吗?3obj 能否上更大 env?**严格对齐**接触门控基线,每个实验只动一个变量。
+
+**mjlab contact 单卡 env 上限(权威值,用户记录;doc 此前缺失)**:Isaac Gym 侧(distance 门控)全部 40000;mjlab 侧(contact 门控)受 mujoco-warp 单卡显存所限各不同——
+| 物体 | Isaac Gym(distance) | mjlab(contact) |
+|---|---|---|
+| cubesmall | 40000 | 24000 |
+| apple | 40000 | 22000 |
+| cup | 40000 | 20000 |
+| 3obj | 40000 | 8000(待测能否更大) |
+
+**三实验(全 cgsmooth_b2_softclip_contact + wdelta + obs full499 + net v4 + 对齐 PPO + max10000 + save250,下表只列差异变量)**:
+| 实验 | task | env | kp | GPU | 研究问题 / 对照 |
+|---|---|---|---|---|---|
+| ① apple env | `AppleMulti_CGSmooth_Contact` | 8000 | 1 | 3 | apple 用 3obj 同 env(8000) 是否比专项 22000 更好?隔离"env 数 vs 多物体迁移"。vs 原专项(22000,0/8) + 3obj 里 apple(8000,3/8) |
+| ② apple kp | `AppleMulti_CGSmooth_Contact_Kp8`(新注册) | 22000 | 8 | 4 | 加 kp(×8) 对 apple 是否有用?对齐原专项 22000,唯一变量 kp。vs 原专项(kp1,0/8) |
+| ③ 3obj env | `3Obj_CGSmooth_Contact` | smoke 测上限 | 1 | 5 | 3obj 能否上更大 env(现仅 8000)?vs 现 3obj(8000,16/22) |
+
+- **对齐核实**:doc 唯一精确训练命令 = 3obj 8000env 那条(HANDOFF L17,**训练不带 MUJOCO_GL**),实验①③直接基于它;非命令行参数全走 `__init__.py`/`ppo.py` 注册默认自动对齐。apple 专项精确 env 数 doc/ckpt/tfevents **均未存**,靠用户记录的 22000(实验②对齐它,我反推的 23000 是错的)。
+- 实验② 新注册 task `WujiHand_Tracking_AppleMulti_CGSmooth_Contact_Kp8`:仅 `finger_kp_scale` 1→8,其余照搬 apple contact 专项。
+- **判据**(沿用):max_z vs 参考峰(`✓`=mz≥ref−0.05),逐 apple lift 序列离线 rollout。⚠ `eval_bonus_per_seq.py` 的 3obj 锁序列 park 修复待核实(只影响实验③评估,①②单物体不受影响)。
+- 启动命令(各 setsid detach,日志 `/tmp/wuji_exp{1,2}_*.log` / `/tmp/wuji_smoke_3obj_*.log`):`CUDA_VISIBLE_DEVICES=<g> pixi run train --task <T> --env.scene.num-envs <N> --agent.run-name <R>`。
+
+**✅ Q1 结果(2026-06-26,apple env 消融已评估)**:exp1 apple 8000 训完(iter9999),逐 apple-lift 8序列 max_z(判据 mz≥ref−0.05;工具 `dextrack_tools/eval_apple_maxz.py`,自校验复现 doc 的 3obj park 值如 s2=0.397):
+  | ckpt | n/8 | 说明 |
+  |---|---|---|
+  | apple 8000 kp1 (exp1) | **0/8** | 全趴地 max_z≈0.063(=apple 静置地面半径) |
+  | apple 22000 kp1 (原专项) | **0/8** | 复现 doc |
+  | 3obj park | **3/8**(s2/s4/s9) | max_z 紧贴 ref |
+  - **结论:env 数不是 apple 失败原因,缺多物体迁移才是**。apple 8000=22000=0/8,env 22000→8000 毫无改善(都卡趴地悬停局部最优);只有 3obj generalist 举起 apple。
+
+**✅ Q2 结果(2026-06-26,apple kp 消融已评估)**:exp2 apple kp8 22000(model_5000,收敛)逐序列 max_z(工具 `eval_apple_kp8.py`):
+  | 配置 | n/8 | 说明 |
+  |---|---|---|
+  | apple kp1 8000(exp1) | 0/8 | |
+  | apple kp1 22000(原专项) | 0/8 | |
+  | apple **kp8** 22000(exp2) | **1/8** | 仅 s4(0.063→0.378),边际非零效应 |
+  | **3obj generalist kp1** | **3/8** | |
+  - **Q1+Q2 合并结论**:apple 专项失败**既非 env 数**(8000=22000=0/8)**也非抓力**(kp8 仅 1/8);**多物体迁移是唯一有效路径**(3obj 3/8 ≥ 所有专项变体)。完整印证 doc"apple 不用加 kp、主推多物体 generalist"。**Q3**(swap,3obj 更大 env)待 swap 训练收敛评估。
+
+### ★★ 调研:能否不 load 3 物体(2026-06-25,异构 env 可行性)
+动机:3obj 每 env 都 load 全 3 物体、park 2 个,显存×3(单卡 env 8000 vs 单物体 22000)+ eval 污染。问:能否每 env 只 load 它需要的 1 物体?
+
+**核心结论**:完全省掉 3 物体 mesh 顶点显存**不行**(`mesh_vert` 是全局共享池,无 per-world 批维,3 套 mesh 必须都编进编译后的单一 MjModel)。**但**挖出两个关键事实:
+1. **代码注释 `env_cfgs.py:151` "mujoco-warp can't swap mesh per env" 是错的**:mujoco-warp 的 `geom_dataid: array("*","ngeom")` **有 `"*"` 批维**,碰撞 kernel 按 `worldid % geom_dataid.shape[0]` 索引(`collision_convex.py:82,343`),配合 mjlab `expand_model_fields`(把字段第0维 tile 到 nworld)**可以 per-world 换 mesh**(同构拓扑前提)。团队没用上。(`geom_type` 无批维=类型全 world 共享不可变;`geom_size/geom_friction` 也有 `"*"`)
+2. **3obj 跌到 8000 env 的主因不是 mesh 显存,是每 env 3 个 object body 撑大 contact/constraint buffer**(`nconmax=384/njmax=1536`,注释 "observed ncon≥248")。
+
+**四路径**(评估见下,⭐=最佳性价比):
+- **(c) per-world geom_dataid swap** ⭐:单个 object geom slot + 每 world 指向当前序列 mesh,每 env 只 1 object body 参与物理(不再 park)→削 contact buffer(真正主因)+消 eval 污染→**env 上限拉回**。中等工程量。**障碍**:cup 用 CoACD 多凸包(多 geom) vs cube/apple 单 hull,geom 数不同构,须先统一拓扑(geom 数量是 per-world 不可变同构约束)。**收益(拉回多少 env)未实测,需 PoC**。
+- (a) 多 mujoco-warp 实例 + 共享 actor-critic 喂一个 rsl_rl runner:唯一真·每 env 只 1 物体,显存线性。工程量最大(写 MultiVecEnv 适配器拼 batch、对齐 reset/CUDA graph;`rl/runner.py` 是 rsl_rl 薄封装,假设单 VecEnv)。
+- (b) primitive 近似:损失抓握保真度(cup 凹/apple 圆),与 GRAB 参考对不上,**不推荐**。运行时换 mesh 顶点机制上不可行。
+- (d) specialist→distillation:团队既定正道,根本绕过(pure multi-obj RL 本就 fair~-30 难训,`env_cfgs.py:152`)。低成本。
+
+**IsaacGym 为何能每 env 不同物体**(`allegro_hand_tracking_generalist.py:5316-5467`):PhysX `create_env`+`create_actor` 每 env 独立场景图、按 `i % len(object_list)` 只实例化那一个物体;mujoco-warp 是「单编译 Model × nworld 份 Data」SIMD,要求同构拓扑。引擎根本架构差异,单实例内学不来。
+
+**推荐**:短期走 (d)(既定路线,且 3obj 8000 已 generalist≥专项);若坚持单实例多物体 RL 则上 (c);真要省到底才上 (a)。**待办:修正 `env_cfgs.py:150-151` 错误注释**。
+
+**PoC 实现进展(2026-06-25,选定"先 c 再 d")**:
+- ✅ **拓扑同构已验证**(推翻 agent 的"cup 不同构"):cube/cup/apple 各 = 1 visual mesh + 1 collision hull = **2 geom 完全同构**(cube is_convex→单hull;cup/apple `_CONVEX_HULL_OBJS` 强制单hull,多凸包会NaN)。→ 单一 object body slot 可容三物体,**无拓扑障碍**。
+- ✅ **碰撞风险排除**:`geom_rbound`/`geom_aabb` 都是 `"*"` per-world 批字段,broadphase 按 `worldid%shape` 索引(`collision_driver.py:294/298/395`)→ 换 mesh 同时写 rbound/aabb,broadphase 不漏检。
+- **完整 per-world 字段清单**(expand+reset 按 env_obj 写):`geom_dataid`(narrowphase顶点)+`geom_rbound`+`geom_aabb`(broadphase)+`body_mass`+`body_inertia`+`body_ipos`+`body_iquat`(质量惯量)。全是 per-world 批字段(mujoco-warp 为 DR 设计)。
+- **接入**:mjlab `expand_model_fields`+`requires_model_fields`(`envs/mdp/dr/geom.py`/`body.py` 现成参考)。
+- **方案**:新 spec(单body+多mesh池)+新 env_cfg(nconmax/njmax 回落单物体96/512)+commands swap模式(替 park)+新 task `..._Swap`(不动现有3obj作对照)。
+
+**✅✅ PoC 成功(2026-06-25,fork 实现,4文件+257行未commit)**:
+- **里程碑1核心机制✓**:探针 `scratchpad/swap_probe.py` nworld=4 设 cube/cup/apple/cube,各自正确落地(cube 0.025=半边长/cup 0.068/apple 0.056),无 NaN/穿地 → **mujoco-warp 碰撞尊重运行时 swap 的 geom_dataid**。
+- **里程碑2集成✓**:新 task `WujiHand_Tracking_3Obj_CGSmooth_Contact_Swap`(list-envs #17,现有 #16 park 版未动作对照)训练 3 iter 无 NaN/OOM,`contact_guide`/`object_inplace_bonus` 上升 → 接触门控在 swap mesh 上正确工作。
+- **★ env 上限拉回 2.75×**:swap 版 **≥22000 env 跑通**(GPU5 峰值 55GB) vs park 版硬上限 **8000**。证实 3-body contact buffer 膨胀(nconmax384/njmax1536)才是 8000 瓶颈,swap 回落单物体 buffer→恢复单物体 22000 上限。**实验③("3obj 更大 env")由此解锁**。
+- **⚠ 待修(正式 swap-vs-park 对比前必做)**:`body_subtreemass`/`body_invweight0`/`dof_invweight0` 未 per-world 重算(停在 cube 值)→apple 用 cube solver 权重,接触阻抗略偏(smoke `unstable` 终止 0.09 可能相关);需走 event-manager `RecomputeLevel.set_const` 按物体重算。稳态吞吐(22000 vs park 8000@13s/iter)未正式测。
+- 代码:`grab_object_cfg.py`(_obj_phys/_build_swap_spec/get_grab_multiobj_swap_cfg)、`commands.py`(swap模式_setup_swap/_write_swap/_resample分支)、`env_cfgs.py`(wuji_hand_3obj_swap_tracking_env_cfg)、`__init__.py`(注册)。未 commit。
+
+**✅ invweight 修复 + 正式 swap 训练启动(2026-06-25)**:
+- **invweight per-world 重算**(commands.py +3处):expand 列表加 `body_subtreemass`/`body_invweight0`/`dof_invweight0`,`_write_swap` 末尾调 `sim.recompute_constants(RecomputeLevel.set_const)` 从 per-world 质量/惯量重算 solver 常量。探针验证:修复前三物体全 cube 值(bug),修复后 apple subtreemass 0.0625→0.324、invweight0 16→3.08(最重→invweight最低,物理正确)。smoke `unstable` 终止 0.09→**0.000**。
+- **四训练并行**(GPU3/4 = exp1/2 apple消融; GPU5/6 = swap):
+  | run | env | GPU | iter-time | 用途 |
+  |---|---|---|---|---|
+  | swap 22000 | 22000 | 5 | 45.8s(含warmup) | 实验③解锁:3obj 更大 env 是否更好 generalist |
+  | swap 8000 | 8000 | 6 | 21.8s | 机制等价对照:应≈park8000(16/22),验证 swap 不引偏差 |
+- **⚠ 吞吐开销**:`recompute_constants` 每 reset 全 world 重算→swap 比 park 慢 ~1.7×(swap8000 21.8s vs park8000 13s)。可优化为"仅 env_obj 变化时重算"。
+- **★ 样本量**:swap22000 每 iter 样本=8000的2.75×,达 park8000×10000=2.56B 等量样本只需 **~3636 iter**(不必跑满10000,否则~127h)。评估对比按等样本(~3600 iter)或等 wall-clock 取点。
+
+**❌ swap 训练发现 bug(2026-06-25,已停诊断)**:swap 跑到 iter~267 时 mean reward 暴跌(swap8000 -8.7→**-1180**、swap22000 **-2064**)、**手部跟踪崩溃**(finger_pos_tracking **-150** vs apple专项 -5.18、hand_pose -61 vs -7、error_joint_pos **0.77→2.01 发散**),**但物体跟踪正常**(object_pos -0.5/contact_guide +7/inplace_bonus 在涨)。→ **物体 swap 对、手崩**。**根因假设**:invweight 修复的 `recompute_constants(set_const)` 全模型重算误伤手 26 dof 的 `dof_invweight0`/`body_invweight0` → 手 actuator 失稳跟不上参考。已停两 swap run(精确 PID,GPU5/6 释放,exp1/2 未动),fork 诊断。
+
+**诊断纠正(fork) + 复核(2026-06-25)**:
+- **① 原"发散"主要是指标误读**:`Episode_Reward` 是逐 episode 求和(×~300步,实测 mean episode length 302),早期大负正常;应比 **park 3obj**(fork 实测 iter8 也 -1338)而非 apple 专项(-5.18,单物体 iter1238 收敛值)。协调者当时比错基线 + 用 Episode_Reward 绝对值判"发散",**过急**。
+- **② 但 `recompute_constants(set_const)` 全模型重算是真隐患**(每 reset 重算全 nv dof invweight 含手26dof + 覆写 qpos + 全 kinematics),已修:物体是独立运动学树→invweight 与手无关→改为 reset **只写物体 dof/body invweight 索引**、删 recompute。验证:手 invweight untouched(maxdiff 2.4e-4 噪声)、物体 invweight 正确(cube16/cup10.4/apple3.2)、unstable 0.000<park0.031。
+- **③ 判 swap 健康用 `error_joint_pos`(均值,会回落)+unstable,别用 Episode_Reward 绝对值**(sum,早期必大负,park 同样)。
+- **⚠ 收敛仍待验证**:修复版重启 swap8000(GPU5)/22000(GPU6),但 iter3-13 早期 error_joint_pos 仍在上升(2.2/3.7)、未见回落,swap22000 unstable 还 0.094。fork 的"≡park"基于 iter8 对照+smoke,**非收敛**。需训数百 iter 看 error_joint_pos 回落到 park 水平 + max_z 才算数。
+- **教训**:① 比基线要同任务同阶段(park 3obj,非 apple 专项);② Episode_Reward 是 sum 不能看绝对值;③ "PoC/smoke 通过"≠长期训练健康。
+
+**❌❌ swap 性能失败(2026-06-26,致命,已止损)**:实测稳态 iter-time — **park8000 13s / swap8000 53s(4×) / swap22000 129s(10×)**,开销随 env 数**超线性恶化**。swap22000 空跑 8 天才 5828 iter。吞吐(env-step/s):park8000 19692 / swap8000 4830 / swap22000 5457 → **swap22000 吞吐仅 park8000 的 28%**;达等样本 2.56B:park8000 **36h** vs swap22000 **130h**(跑满10000 iter 需 15 天)。**swap 拉高 env 上限(8000→22000)但吞吐崩盘,完全负收益**。
+- **根因**:per-world mesh swap(每 reset 写 geom_dataid/rbound/aabb + `expand_model_fields` 把字段扩 nworld 份)是 mujoco-warp 慢路径,失去"所有 world 共享同一 geom"的优化,每 world 独立索引 → 随 env 数恶化。机制固有,非调参能救。
+- **结论:swap 机制可行(碰撞正确/能拉 env 上限)但性能完全不实用,放弃用它做正式训练**。已停 swap22000(止损);swap8000 已训完(iter10000)留作 Q3 机制等价对照(纯验证价值)。**正式路线回 park8000(36h/16-22 已验证)或 specialist→distillation(路径d)**。
+- **监控教训**:盯长训要算 `iter-time × 总iter = 墙钟`,不只看 iter/reward——swap22000 129s/it 从头就在,应第一次查就算出 15 天而立即止损,而非空跑 8 天占 GPU。
+
+**❌ Q3 结果:swap 双重失败(2026-06-26)**:3obj 全22序列 max_z 三方(park8000/swap8000/swap22000):
+| 物体 | park8000 | swap8000 | swap22000 |
+|---|---|---|---|
+| cube | 6/6 | 6/6 | 6/6 |
+| cup | 7/8 | 7/8 | 7/8 |
+| apple | **3/8** | **0/8** | **0/8** |
+| TOTAL | **16/22** | 13/22 | 13/22 |
+- **swap 机制物理正确,apple 退化是训练问题(非机制)** —— 交叉诊断纠正(协调者一度误判"机制物理退化"):cube/cup 三方等价(6/6,7/8,max_z 差≤1mm)。apple swap 0/8 vs park 3/8。**交叉诊断(park策略 × swap env)**:把 park 策略装进 swap env 评 apple → **2/8**(s3 apple 动 36.5cm、s4/s9 举到 ref)→ **swap env 物理完全支持 apple 抓举**;而 swap-训练策略让 apple 全程静止(z_range 0.005–0.009,没碰)→ **swap 训练陷入"无视 apple"局部最优**。**根因**:swap 三物体共用一个 body slot,物体身份仅靠 256-d latent(信号弱),对最重 apple → 策略抓 cube/cup 无视 apple;park 每物体独立 body,信号强,学到 apple 3/8。
+- **Q3 答案:"3obj 更大 env"此路不通**:swap22000(更大env)=13/22 < park8000=16/22(swap 更大反而更差+10×慢+apple退化);park 更大撞显存墙。**park8000 (16/22)=单卡 3obj generalist 最优**;真要更大 env 只能多卡 DDP。
+- **swap 定论(修正)**:机制**物理正确**+解锁 env 上限(8000→22000),但两个问题 —— ①**性能 10×慢(硬伤,per-world 字段慢路径,即使修好②也不实用)** ②as-trained 在 apple 退化(**训练条件化弱,非机制**;物体身份仅靠 256-d latent 信号不足)。**Q3"更大 env 增益"暂无法在 swap 上干净回答**(apple 训练失败掩盖 env 信号)。修复方向:加强物体条件化(喂几何/尺寸特征而非仅 latent)、apple 课程、或走 distillation。**实用性被 10×慢否决**;swap 的价值=证明机制可行 + 揭示物体条件化信号强度对 generalist 关键(park 独立 body 强 vs swap 弱 latent)。
+
+**★ 三问最终结论(2026-06-26)**:apple 举起的唯一有效路径 = 多物体迁移(park 3obj)。① env 数不是原因(8000=22000=0/8) ② kp 边际(kp8=1/8) ③ 更大 env 单卡不可行(park 显存墙;swap 机制解锁 22000 但 10×慢+训练在 apple 退化,env 增益无法干净评估)。**park8000 16/22 是单卡最优,扩物体走 distillation**。
+
 ### ★ TODO(待办)
 - **扩多物体 generalist**(主线):3obj(cube+cup+apple)已验证 generalist≥专项;下一步加更多物体 / 让 3obj 多训(现仅 2.56B 样本就 16/22)。**apple 不用加 kp**。
 - **cgsmooth 训更久**(可选):单序列三档都只 500iter;cgsmooth 9 项 reward 欠训,延到 1000-1500iter 才能量化 HAND_EMA/action_rate 的抖动↓收益。
