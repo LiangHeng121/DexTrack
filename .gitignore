@@ -121,4 +121,5 @@ data_tars/
 *.tar
 
 
-wuji_retarget_pen_min/*MUJOCO_LOG.TXT
+wuji_retarget_pen_min/*
+MUJOCO_LOG.TXT
