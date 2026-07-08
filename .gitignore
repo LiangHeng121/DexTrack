@@ -123,3 +123,4 @@ data_tars/
 
 wuji_retarget_pen_min/*
 MUJOCO_LOG.TXT
+videos/**/*_old.gif
