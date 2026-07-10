@@ -129,3 +129,8 @@ wujihand2-reorient-deploy/*videos/
 
 # 视频产物不入库
 videos/
+
+# 独立项目/repo, 不属于本仓库
+wuji-rl-gmt/
+wuji_retarget_pen_min/
+wujihand2-reorient-deploy/
