@@ -126,3 +126,6 @@ MUJOCO_LOG.TXT
 videos/**/*_old.gif
 wujihand2-cube-reorient/*
 wujihand2-reorient-deploy/*videos/
+
+# 视频产物不入库
+videos/
