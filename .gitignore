@@ -125,4 +125,4 @@ wuji_retarget_pen_min/*
 MUJOCO_LOG.TXT
 videos/**/*_old.gif
 wujihand2-cube-reorient/*
-wujihand2-reorient-deploy/*
+wujihand2-reorient-deploy/*videos/
